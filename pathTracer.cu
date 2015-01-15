@@ -1,8 +1,11 @@
 #include <stdio.h>
 #include <iostream>
 
-__device__ const char *STR = "HELLO WORLD!";
-const char STR_LENGTH = 12;
+struct hit {
+	bool isHit;
+	int index;
+	float t;
+};
 
 __device__ float innerProduct(float* u, float* v, int uIndex, int vIndex) {
 
@@ -19,12 +22,12 @@ __device__ float checkItersection(float* rayStart, float* rayDirection, float* t
 	float v1[3], v2[3], cross[3], s[3]; //Triangle vectors
         float a, f, b, c, t;
 
-      	v1[0] = triangles[triangleIndex + 0 + 0] - triangles[triangleIndex + 3 + 0];
-        v1[1] = triangles[triangleIndex + 0 + 1] - triangles[triangleIndex + 3 + 1];
-        v1[2] = triangles[triangleIndex + 0 + 2] - triangles[triangleIndex + 3 + 2];
-        v2[0] = triangles[triangleIndex + 0 + 0] - triangles[triangleIndex + 6 + 0];
-        v2[1] = triangles[triangleIndex + 0 + 1] - triangles[triangleIndex + 6 + 1];
-        v2[2] = triangles[triangleIndex + 0 + 2] - triangles[triangleIndex + 6 + 2];
+	v1[0] = triangles[triangleIndex + 3 + 0] - triangles[triangleIndex + 0 + 0];
+        v1[1] = triangles[triangleIndex + 3 + 1] - triangles[triangleIndex + 0 + 1];
+        v1[2] = triangles[triangleIndex + 3 + 2] - triangles[triangleIndex + 0 + 2];
+        v2[0] = triangles[triangleIndex + 6 + 0] - triangles[triangleIndex + 0 + 0];
+        v2[1] = triangles[triangleIndex + 6 + 1] - triangles[triangleIndex + 0 + 1];
+        v2[2] = triangles[triangleIndex + 6 + 2] - triangles[triangleIndex + 0 + 2];
 
         crossProduct(rayDirection, v2, 0, 0, cross); //v X v2
 
@@ -35,9 +38,10 @@ __device__ float checkItersection(float* rayStart, float* rayDirection, float* t
 		return INFINITY;
         }
         f = 1.0 / a;
-        s[0] = triangles[triangleIndex + 0 + 0] - rayStart[0];
-        s[1] = triangles[triangleIndex + 0 + 1] - rayStart[1];
-        s[2] = triangles[triangleIndex + 0 + 2] - rayStart[2];
+	s[0] = rayStart[0] - triangles[triangleIndex + 0 + 0];
+        s[1] = rayStart[1] - triangles[triangleIndex + 0 + 1];
+        s[2] = rayStart[2] - triangles[triangleIndex + 0 + 2];
+
 
         b = f * innerProduct(s, cross, 0, 0);
 	if (b < 0.0 || b > 1.0) {
@@ -63,7 +67,7 @@ __device__ float checkItersection(float* rayStart, float* rayDirection, float* t
 	return INFINITY;
 }
 
-__device__ int castRay(float* rayStart, float* rayDirection, float* triangles) {
+__device__ hit castRay(float* rayStart, float* rayDirection, float* triangles) {
 	float intersection;
         float closestIntersection = INFINITY;
         int closestIntersectionIndex = -1;
@@ -75,7 +79,12 @@ __device__ int castRay(float* rayStart, float* rayDirection, float* triangles) {
                 }
         }
 
-	return closestIntersectionIndex;
+	hit rayHit = hit();
+	rayHit.isHit = (closestIntersectionIndex != -1);
+	rayHit.t = closestIntersection;
+	rayHit.index = closestIntersectionIndex;
+
+	return rayHit;
 }
 
 __global__ void tracer(float* field, float* triangles) {
@@ -87,11 +96,11 @@ __global__ void tracer(float* field, float* triangles) {
 	float rayStart[3] = {xIndex, yIndex, 10.0};
 	float rayDirection[3] = {0.0, 0.0, -1.0};
 
-	int triangleIndex = castRay(rayStart, rayDirection, triangles);
-	if (triangleIndex == -1) {
-		field[index] = 0;
+	hit rayHit = castRay(rayStart, rayDirection, triangles);
+	if (rayHit.isHit) {
+		field[index] = 1.0;
 	} else {
-		field[index] = 1;
+		field[index] = 0.0;
 	}
 
 	//printf("Triangle: [%f, %f, %f], [%f, %f, %f], [%f, %f, %f]\n", triangles[0], triangles[1], triangles[2], triangles[3], triangles[4], triangles[5], triangles[6], triangles[7], triangles[8]);
@@ -112,11 +121,16 @@ int main(void)
 	/*float triangles[trianglesCount][3][3] = {
 		{{-5.0, -5.0, 0.0}, {5.0, -5.0, 0.0}, {0.0, 5.0, 0.0}},
 	};*/
-	float triangles[9] = {
+	/*float triangles[9] = {
 		-10.0, -10.0, 0.0, 
 		10.0, -10.0, 0.0, 
 		0.0, 10.0, 0.0
-	};
+	};*/
+	float triangles[9] = {
+		0.0, 10.0, 0.0,
+                10.0, -10.0, 0.0,
+		-10.0, -10.0, 0.0
+        };
 
 	float near = 0.0;
 	float far = 100.0;
@@ -159,7 +173,7 @@ int main(void)
 
 	cudaMemcpy(device_triangles, triangles, triangles_num_bytes, cudaMemcpyHostToDevice);
 
-
+	//hello<<<1,1>>>();
 	//tracer<<<1,1>>>(device_array, device_triangles);
 	tracer<<<num_blocks, num_threads>>>(device_array, device_triangles);
 	cudaDeviceSynchronize();
