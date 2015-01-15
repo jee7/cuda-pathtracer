@@ -14,9 +14,9 @@ __device__ float innerProduct(float* u, float* v, int uIndex, int vIndex) {
 }
 
 __device__ void crossProduct(float* u, float* v, int uIndex, int vIndex, float* result) {
-	result[0] = v[vIndex + 1] * u[uIndex + 2] - v[vIndex + 2] * u[uIndex + 1]; //v X v2
-        result[1] = v[vIndex + 2] * u[uIndex + 0] - v[vIndex + 0] * u[uIndex + 2];
-        result[2] = v[vIndex + 0] * u[uIndex + 1] - v[vIndex + 1] * u[uIndex + 0];
+	result[0] = u[vIndex + 1] * v[uIndex + 2] - u[vIndex + 2] * v[uIndex + 1]; //v X v2
+        result[1] = u[vIndex + 2] * v[uIndex + 0] - u[vIndex + 0] * v[uIndex + 2];
+        result[2] = u[vIndex + 0] * v[uIndex + 1] - u[vIndex + 1] * v[uIndex + 0];
 }
 
 __device__ float checkItersection(float* rayStart, float* rayDirection, float* triangles, int triangleIndex) {
@@ -93,13 +93,18 @@ __global__ void tracer(float* field, float* triangles, float* normals) {
 	int xIndex = index % 32 - 16;
 	int yIndex = 16 - (int)(index / 32);
 
+	float lightDirection[3] = {0.707107, 0.0, 0.707107};
+
 
 	float rayStart[3] = {xIndex, yIndex, 10.0};
 	float rayDirection[3] = {0.0, 0.0, -1.0};
 
 	hit rayHit = castRay(rayStart, rayDirection, triangles);
 	if (rayHit.isHit) {
-		field[index] = 1.0;
+		//field[index] = 1.0;
+		//printf("Normal: [%f, %f, %f]\n", normals[rayHit.index], normals[rayHit.index + 1], normals[rayHit.index + 2]);
+		printf("dot product: %f \n", innerProduct(normals, lightDirection, rayHit.index, 0));
+		field[index] = innerProduct(normals, lightDirection, rayHit.index, 0);
 	} else {
 		field[index] = 0.0;
 	}
@@ -123,22 +128,22 @@ vector makeVector(float* p1, float* p2, int p1Index, int p2Index) {
 	vector v;
 	v.x = p2[p2Index + 0] - p1[p1Index + 0];
 	v.y = p2[p2Index + 1] - p1[p1Index + 1]; 
-	v.z = p2[p2Index + 2] - p1[p1Index + 1];
+	v.z = p2[p2Index + 2] - p1[p1Index + 2];
 
 	return v;
 }
 
 vector crossProduct(vector u, vector v) {
 	vector result;
-        result.x = v.y * u.z - v.z * u.y; 
-        result.y = v.z * u.x - v.x * u.z;
-        result.z = v.x * u.y - v.y * u.x;
+        result.x = u.y * v.z - u.z * v.y; 
+        result.y = u.z * v.x - u.x * v.z;
+        result.z = u.x * v.y - u.y * v.x;
 
 	return result;
 }
 
 vector normalize(vector v) {
-	float length = v.x * v.x + v.y * v.y + v.z * v.z;
+	float length = sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
 	vector result;
 	result.x = v.x / length;
 	result.y = v.y / length;
@@ -154,10 +159,7 @@ int main(void)
 	int height = 32;
 
 	const int trianglesCount = 1;
-	/*float triangles[trianglesCount][3][3] = {
-		{{-5.0, -5.0, 0.0}, {5.0, -5.0, 0.0}, {0.0, 5.0, 0.0}},
-	};*/
-	float triangles[9] = {
+	float triangles[trianglesCount * 9] = {
 		-10.0, -10.0, 0.0, 
 		10.0, -10.0, 0.0, 
 		0.0, 10.0, 0.0
@@ -165,14 +167,17 @@ int main(void)
 	float normals[trianglesCount * 3];
 	for (int i = 0; i < trianglesCount; i += 3) {
 		vector v1 = makeVector(triangles, triangles, i + 0, i + 3);
-		vector v2 = makeVector(triangles, triangles, i + 3, i + 6);
+		vector v2 = makeVector(triangles, triangles, i + 0, i + 6);
+		printf("v1: [%f, %f, %f]\n", v1.x, v1.y, v1.z);
+		printf("v2: [%f, %f, %f]\n", v2.x, v2.y, v2.z);
+
 		vector cross = crossProduct(v1, v2);
 		cross = normalize(cross);
 		normals[i + 0] = cross.x;
 		normals[i + 1] = cross.y;
 		normals[i + 2] = cross.z;
 	}
-	printf("Normal: [%f, %f, %f]", normals[0], normals[1], normals[2]);
+	printf("Normal: [%f, %f, %f]\n", normals[0], normals[1], normals[2]);
 
 	float near = 0.0;
 	float far = 100.0;
@@ -212,13 +217,13 @@ int main(void)
 
 	cudaMalloc((void**)&device_array, num_bytes);
 
-	float triangles_num_bytes = 9 * sizeof(float);
-	float normals_num_bytes = trianglesCount * 3;
+	float triangles_num_bytes = trianglesCount * 9 * sizeof(float);
+	float normals_num_bytes = trianglesCount * 3 * sizeof(float);
 	cudaMalloc((void**)&device_triangles, triangles_num_bytes);
 	cudaMalloc((void**)&device_normals, normals_num_bytes);
 
 	cudaMemcpy(device_triangles, triangles, triangles_num_bytes, cudaMemcpyHostToDevice);
-	cudaMemcpy(device_normals, normals, triangles_num_bytes, cudaMemcpyHostToDevice);
+	cudaMemcpy(device_normals, normals, normals_num_bytes, cudaMemcpyHostToDevice);
 
 	//hello<<<1,1>>>();
 	//tracer<<<1,1>>>(device_array, device_triangles);
