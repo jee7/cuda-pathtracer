@@ -68,15 +68,46 @@ __device__ float checkItersection(float* rayStart, float* rayDirection, float* t
 	return INFINITY;
 }
 
-__device__ hit castRay(float* rayStart, float* rayDirection, float* triangles) {
+__device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, int* faces) {
+	//TODO Use normals to cull some intersections?
+	//printf("BB");
+
 	float intersection;
         float closestIntersection = INFINITY;
         int closestIntersectionIndex = -1;
-        for (int i = 0; i < 1; i += 9) {
-                intersection = checkItersection(rayStart, rayDirection, triangles, i);
+	float triangle[9];
+        for (int i = 0; i < (3 * 10); i += 3) {
+		//printf("%d:\n", i);
+		//printf("Face [%d, %d, %d]\n", faces[i], faces[i+1], faces[i+2]);
+		//printf("Triangle: [%f, %f, %f][%f, %f, %f][%f, %f, %f]", vertices[0],  vertices[1],  vertices[2],  vertices[3],  vertices[4],  vertices[5],  vertices[6],  vertices[7],  vertices[8]);
+
+		triangle[0] = vertices[3 * faces[i + 0] + 0];
+		triangle[1] = vertices[3 * faces[i + 0] + 1];
+		triangle[2] = vertices[3 * faces[i + 0] + 2];
+		triangle[3] = vertices[3 * faces[i + 1] + 0];
+		triangle[4] = vertices[3 * faces[i + 1] + 1];
+		triangle[5] = vertices[3 * faces[i + 1] + 2];
+		triangle[6] = vertices[3 * faces[i + 2] + 0];
+		triangle[7] = vertices[3 * faces[i + 2] + 1];
+		triangle[8] = vertices[3 * faces[i + 2] + 2];
+
+		//printf("Vertex [%f, %f, %f]\n", triangle[0], triangle[1], triangle[2]);
+		//printf("Vertex [%f, %f, %f]\n", triangle[3], triangle[4], triangle[5]);
+		//printf("Vertex [%f, %f, %f]\n", triangle[6], triangle[7], triangle[8]);
+
+
+
+                intersection = checkItersection(rayStart, rayDirection, triangle, 0);
+		/*if (rayStart[0] == 0.0 and rayStart[1] == 0.0) {
+			printf("Vertex [%f, %f, %f]\n", triangle[0], triangle[1], triangle[2]);
+		}*/
                 if (intersection < closestIntersection) {
                         closestIntersection = intersection;
                         closestIntersectionIndex = i;
+			//printf("Vertex [%f, %f, %f]\n", triangle[0], triangle[1], triangle[2]);
+                	//printf("Vertex [%f, %f, %f]\n", triangle[3], triangle[4], triangle[5]);
+                	//printf("Vertex [%f, %f, %f]\n", triangle[6], triangle[7], triangle[8]);
+
                 }
         }
 
@@ -88,22 +119,25 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* triangles) {
 	return rayHit;
 }
 
-__global__ void tracer(float* field, float* triangles, float* normals) {
+__global__ void tracer(float* field, float* vertices, int* faces, float* normals) {
+	//printf("Face: [%d, %d, %d]\n", faces[0], faces[1], faces[2]);
+	//printf("Vertex: [%f, %f, %f]\n", vertices[0], vertices[1], vertices[2]);
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	int xIndex = index % 32 - 16;
 	int yIndex = 16 - (int)(index / 32);
 
 	float lightDirection[3] = {0.707107, 0.0, 0.707107};
 
-
+	//printf("AA");
 	float rayStart[3] = {xIndex, yIndex, 10.0};
 	float rayDirection[3] = {0.0, 0.0, -1.0};
 
-	hit rayHit = castRay(rayStart, rayDirection, triangles);
+	hit rayHit = castRay(rayStart, rayDirection, vertices, faces);
 	if (rayHit.isHit) {
 		//field[index] = 1.0;
 		//printf("Normal: [%f, %f, %f]\n", normals[rayHit.index], normals[rayHit.index + 1], normals[rayHit.index + 2]);
-		printf("dot product: %f \n", innerProduct(normals, lightDirection, rayHit.index, 0));
+		//printf("Ray [%d, %d]", xIndex, yIndex);
+		//printf("dot product: %f \n", innerProduct(normals, lightDirection, rayHit.index, 0));
 		field[index] = innerProduct(normals, lightDirection, rayHit.index, 0);
 	} else {
 		field[index] = 0.0;
@@ -158,16 +192,33 @@ int main(void)
 	int width = 32;
 	int height = 32;
 
-	const int trianglesCount = 1;
-	float triangles[trianglesCount * 9] = {
-		-10.0, -10.0, 0.0, 
-		10.0, -10.0, 0.0, 
-		0.0, 10.0, 0.0
+	const int trianglesCount = 10;
+	float vertices[8 * 3] = {
+		-10.0, -10.0,   0.0, //0  //Left wall
+		-10.0, -10.0, -10.0, //1 
+		-10.0,  10.0, -10.0, //2
+		-10.0,  10.0,   0.0, //3
+		 10.0, -10.0,   0.0, //4  //Right wall
+                 10.0, -10.0, -10.0, //5
+                 10.0,  10.0, -10.0, //6
+                 10.0,  10.0,   0.0  //7
+	};
+	int faces[trianglesCount * 3] = {
+		0, 1, 2, //Left wall
+		0, 2, 3,
+		1, 5, 6, //Back wall
+		1, 6, 2,
+		5, 7, 6, //Right wall
+		5, 4, 7,
+		2, 7, 3, //Top wall
+		2, 6, 7,
+		0, 5, 1, //Bottom wall
+		0, 4, 5
 	};
 	float normals[trianglesCount * 3];
-	for (int i = 0; i < trianglesCount; i += 3) {
-		vector v1 = makeVector(triangles, triangles, i + 0, i + 3);
-		vector v2 = makeVector(triangles, triangles, i + 0, i + 6);
+	for (int i = 0; i < trianglesCount * 3; i += 3) {
+		vector v1 = makeVector(vertices, vertices, 3 * faces[i + 0], 3 * faces[i + 1]);
+		vector v2 = makeVector(vertices, vertices, 3 * faces[i + 0], 3 * faces[i + 2]);
 		printf("v1: [%f, %f, %f]\n", v1.x, v1.y, v1.z);
 		printf("v2: [%f, %f, %f]\n", v2.x, v2.y, v2.z);
 
@@ -176,8 +227,9 @@ int main(void)
 		normals[i + 0] = cross.x;
 		normals[i + 1] = cross.y;
 		normals[i + 2] = cross.z;
+
+		printf("Normal: [%f, %f, %f]\n", normals[i + 0], normals[i + 1], normals[i + 2]);
 	}
-	printf("Normal: [%f, %f, %f]\n", normals[0], normals[1], normals[2]);
 
 	float near = 0.0;
 	float far = 100.0;
@@ -212,22 +264,28 @@ int main(void)
 
 	// cudaMalloc a device array
 	float *device_array = 0;
-	float *device_triangles = 0;
+	float *device_vertices = 0;
+	int *device_faces = 0;
 	float *device_normals = 0;
 
 	cudaMalloc((void**)&device_array, num_bytes);
 
-	float triangles_num_bytes = trianglesCount * 9 * sizeof(float);
+	float faces_num_bytes = trianglesCount * 3 * sizeof(int);
+	float vertices_num_bytes = 3 * 8 * sizeof(float);
 	float normals_num_bytes = trianglesCount * 3 * sizeof(float);
-	cudaMalloc((void**)&device_triangles, triangles_num_bytes);
+	cudaMalloc((void**)&device_vertices, vertices_num_bytes);
+	cudaMalloc((void**)&device_faces, faces_num_bytes);
 	cudaMalloc((void**)&device_normals, normals_num_bytes);
 
-	cudaMemcpy(device_triangles, triangles, triangles_num_bytes, cudaMemcpyHostToDevice);
+	printf("Int: %i\n", sizeof(int));
+
+	cudaMemcpy(device_faces, faces, faces_num_bytes, cudaMemcpyHostToDevice);
+	cudaMemcpy(device_vertices, vertices, vertices_num_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(device_normals, normals, normals_num_bytes, cudaMemcpyHostToDevice);
 
 	//hello<<<1,1>>>();
-	//tracer<<<1,1>>>(device_array, device_triangles);
-	tracer<<<num_blocks, num_threads>>>(device_array, device_triangles, device_normals);
+	//tracer<<<1,1>>>(device_array, device_vertices, device_faces, device_normals);
+	tracer<<<num_blocks, num_threads>>>(device_array, device_vertices, device_faces, device_normals);
 	cudaDeviceSynchronize();
 
 	// download and inspect the result on the host:
@@ -237,7 +295,8 @@ int main(void)
 	for (int i = 0; i < width; i++) {
                 for (int j = 0; j < height; j++) {
 			//std::cout << result[i][j] << ", ";
-			std::cout << host_array[i * width + j] << " ";
+			//std::cout << host_array[i * width + j] << " ";
+			printf("%.2f ", host_array[i * width + j]);
                 }
 		std::cout << std::endl;
         }
