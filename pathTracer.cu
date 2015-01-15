@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <iostream>
+#include <math.h>
 
 struct hit {
 	bool isHit;
@@ -87,7 +88,7 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* triangles) {
 	return rayHit;
 }
 
-__global__ void tracer(float* field, float* triangles) {
+__global__ void tracer(float* field, float* triangles, float* normals) {
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	int xIndex = index % 32 - 16;
 	int yIndex = 16 - (int)(index / 32);
@@ -112,6 +113,41 @@ __global__ void hello() {
 	printf("bb");
 }
 
+struct vector {
+	float x;
+	float y;
+	float z;
+};
+
+vector makeVector(float* p1, float* p2, int p1Index, int p2Index) {
+	vector v;
+	v.x = p2[p2Index + 0] - p1[p1Index + 0];
+	v.y = p2[p2Index + 1] - p1[p1Index + 1]; 
+	v.z = p2[p2Index + 2] - p1[p1Index + 1];
+
+	return v;
+}
+
+vector crossProduct(vector u, vector v) {
+	vector result;
+        result.x = v.y * u.z - v.z * u.y; 
+        result.y = v.z * u.x - v.x * u.z;
+        result.z = v.x * u.y - v.y * u.x;
+
+	return result;
+}
+
+vector normalize(vector v) {
+	float length = v.x * v.x + v.y * v.y + v.z * v.z;
+	vector result;
+	result.x = v.x / length;
+	result.y = v.y / length;
+	result.z = v.z / length;
+
+	return result;
+}
+
+
 int main(void)
 {
 	int width = 32;
@@ -121,16 +157,22 @@ int main(void)
 	/*float triangles[trianglesCount][3][3] = {
 		{{-5.0, -5.0, 0.0}, {5.0, -5.0, 0.0}, {0.0, 5.0, 0.0}},
 	};*/
-	/*float triangles[9] = {
+	float triangles[9] = {
 		-10.0, -10.0, 0.0, 
 		10.0, -10.0, 0.0, 
 		0.0, 10.0, 0.0
-	};*/
-	float triangles[9] = {
-		0.0, 10.0, 0.0,
-                10.0, -10.0, 0.0,
-		-10.0, -10.0, 0.0
-        };
+	};
+	float normals[trianglesCount * 3];
+	for (int i = 0; i < trianglesCount; i += 3) {
+		vector v1 = makeVector(triangles, triangles, i + 0, i + 3);
+		vector v2 = makeVector(triangles, triangles, i + 3, i + 6);
+		vector cross = crossProduct(v1, v2);
+		cross = normalize(cross);
+		normals[i + 0] = cross.x;
+		normals[i + 1] = cross.y;
+		normals[i + 2] = cross.z;
+	}
+	printf("Normal: [%f, %f, %f]", normals[0], normals[1], normals[2]);
 
 	float near = 0.0;
 	float far = 100.0;
@@ -166,16 +208,21 @@ int main(void)
 	// cudaMalloc a device array
 	float *device_array = 0;
 	float *device_triangles = 0;
+	float *device_normals = 0;
+
 	cudaMalloc((void**)&device_array, num_bytes);
 
 	float triangles_num_bytes = 9 * sizeof(float);
+	float normals_num_bytes = trianglesCount * 3;
 	cudaMalloc((void**)&device_triangles, triangles_num_bytes);
+	cudaMalloc((void**)&device_normals, normals_num_bytes);
 
 	cudaMemcpy(device_triangles, triangles, triangles_num_bytes, cudaMemcpyHostToDevice);
+	cudaMemcpy(device_normals, normals, triangles_num_bytes, cudaMemcpyHostToDevice);
 
 	//hello<<<1,1>>>();
 	//tracer<<<1,1>>>(device_array, device_triangles);
-	tracer<<<num_blocks, num_threads>>>(device_array, device_triangles);
+	tracer<<<num_blocks, num_threads>>>(device_array, device_triangles, device_normals);
 	cudaDeviceSynchronize();
 
 	// download and inspect the result on the host:
