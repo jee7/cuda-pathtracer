@@ -15,76 +15,87 @@ __device__ void crossProduct(float* u, float* v, int uIndex, int vIndex, float* 
         result[2] = v[vIndex + 0] * u[uIndex + 1] - v[vIndex + 1] * u[uIndex + 0];
 }
 
+__device__ float checkItersection(float* rayStart, float* rayDirection, float* triangles, int triangleIndex) {
+	float v1[3], v2[3], cross[3], s[3]; //Triangle vectors
+        float a, f, b, c, t;
+
+      	v1[0] = triangles[triangleIndex + 0 + 0] - triangles[triangleIndex + 3 + 0];
+        v1[1] = triangles[triangleIndex + 0 + 1] - triangles[triangleIndex + 3 + 1];
+        v1[2] = triangles[triangleIndex + 0 + 2] - triangles[triangleIndex + 3 + 2];
+        v2[0] = triangles[triangleIndex + 0 + 0] - triangles[triangleIndex + 6 + 0];
+        v2[1] = triangles[triangleIndex + 0 + 1] - triangles[triangleIndex + 6 + 1];
+        v2[2] = triangles[triangleIndex + 0 + 2] - triangles[triangleIndex + 6 + 2];
+
+        crossProduct(rayDirection, v2, 0, 0, cross); //v X v2
+
+        a = innerProduct(v1, cross, 0, 0);
+
+        if (a > -0.00001 && a < 0.00001) {
+                      
+		return INFINITY;
+        }
+        f = 1.0 / a;
+        s[0] = triangles[triangleIndex + 0 + 0] - rayStart[0];
+        s[1] = triangles[triangleIndex + 0 + 1] - rayStart[1];
+        s[2] = triangles[triangleIndex + 0 + 2] - rayStart[2];
+
+        b = f * innerProduct(s, cross, 0, 0);
+	if (b < 0.0 || b > 1.0) {
+                                
+		return INFINITY;
+       	}
+
+	crossProduct(s, v1, 0, 0, cross);
+        c = f * innerProduct(rayDirection, cross, 0, 0);
+
+        if (c < 0.0 || b + c > 1.0) {
+
+		return INFINITY;
+        }
+
+        t = f * innerProduct(v2, cross, 0, 0);
+        if (t > 0.00001) {
+		//printf("Ray: [%f, %f, %f] -> [%f, %f, %f]\n", p[0], p[1], p[2], v[0], v[1], v[2]);
+
+		return t;
+        }
+
+	return INFINITY;
+}
+
+__device__ int castRay(float* rayStart, float* rayDirection, float* triangles) {
+	float intersection;
+        float closestIntersection = INFINITY;
+        int closestIntersectionIndex = -1;
+        for (int i = 0; i < 1; i += 9) {
+                intersection = checkItersection(rayStart, rayDirection, triangles, i);
+                if (intersection < closestIntersection) {
+                        closestIntersection = intersection;
+                        closestIntersectionIndex = i;
+                }
+        }
+
+	return closestIntersectionIndex;
+}
+
 __global__ void tracer(float* field, float* triangles) {
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	int xIndex = index % 32 - 16;
 	int yIndex = 16 - (int)(index / 32);
 
 
-	float p[3] = {xIndex, yIndex, 1.0};
-	float v[3] = {0.0, 0.0, -1.0};
+	float rayStart[3] = {xIndex, yIndex, 10.0};
+	float rayDirection[3] = {0.0, 0.0, -1.0};
 
-	float v1[3], v2[3], cross[3], s[3]; //Triangle vectors
-	float a, f, b, c, t;
+	int triangleIndex = castRay(rayStart, rayDirection, triangles);
+	if (triangleIndex == -1) {
+		field[index] = 0;
+	} else {
+		field[index] = 1;
+	}
 
 	//printf("Triangle: [%f, %f, %f], [%f, %f, %f], [%f, %f, %f]\n", triangles[0], triangles[1], triangles[2], triangles[3], triangles[4], triangles[5], triangles[6], triangles[7], triangles[8]);
 	//printf("Ray: [%f, %f, %f] -> [%f, %f, %f]\n", p[0], p[1], p[2], v[0], v[1], v[2]);
-
-
-	for (int i = 0; i < 1; i += 9) {
-		/*
-		v1[0] = triangles[i + 0 + 0] - triangles[i + 3 + 0];
-		v1[1] = triangles[i + 0 + 1] - triangles[i + 3 + 1];
-		v1[2] = triangles[i + 0 + 2] - triangles[i + 3 + 2];
-		v2[0] = triangles[i + 6 + 0] - triangles[i + 3 + 0];
-		v2[1] = triangles[i + 6 + 1] - triangles[i + 3 + 1];
-		v2[2] = triangles[i + 6 + 2] - triangles[i + 3 + 2];
-		*/
-		v1[0] = triangles[i + 0 + 0] - triangles[i + 3 + 0];
-                v1[1] = triangles[i + 0 + 1] - triangles[i + 3 + 1];
-                v1[2] = triangles[i + 0 + 2] - triangles[i + 3 + 2];
-                v2[0] = triangles[i + 0 + 0] - triangles[i + 6 + 0];
-                v2[1] = triangles[i + 0 + 1] - triangles[i + 6 + 1];
-                v2[2] = triangles[i + 0 + 2] - triangles[i + 6 + 2];
-
-		crossProduct(v, v2, 0, 0, cross); //v X v2
-
-		a = innerProduct(v1, cross, 0, 0);
-		
-		if (a > -0.00001 && a < 0.00001) {
-			field[index] = 0.1;
-		} else {
-			f = 1.0 / a;
-			s[0] = triangles[i + 0 + 0] - p[0];
-			s[1] = triangles[i + 0 + 1] - p[1];
-			s[2] = triangles[i + 0 + 2] - p[2];
-
-			b = f * innerProduct(s, cross, 0, 0);
-
-			if (b < 0.0 || b > 1.0) {
-				field[index] = 0.2;
-			} else {
-
-				crossProduct(s, v1, 0, 0, cross);
-				c = f * innerProduct(v, cross, 0, 0);
-
-				if (c < 0.0 || b + c > 1.0) {
-					field[index] = 0.3;
-				} else {
-
-					t = f * innerProduct(v2, cross, 0, 0);
-					if (t > 0.00001) {
-						field[index] = 0.4;
-					} else {
-						field[index] = 1.1;
-						printf("Ray: [%f, %f, %f] -> [%f, %f, %f]\n", p[0], p[1], p[2], v[0], v[1], v[2]);
-					}
-				}
-			}
-		}
-	}
-
-	
 	//printf("[%d, %d] ", xIndex, yIndex);
 	//field[index] = 1.0;
 }
