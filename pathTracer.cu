@@ -3,6 +3,11 @@
 #include <math.h>
 
 #include "cudaQueue.cu"
+#include <curand.h>
+#include <curand_kernel.h>
+
+#define ITERATIONS 20
+#define BOUNCES 4
 
 struct hit {
 	bool isHit;
@@ -12,19 +17,43 @@ struct hit {
 
 __device__ Queue q;
 
-__device__ void randomReflect(float* normal, int normalIndex, float* result) {
+__device__ float randomFloat(float a, float b, curandState* state) {
 
+	return (b - a) * curand_uniform(state) + a;
 }
 
 __device__ float innerProduct(float* u, float* v, int uIndex, int vIndex) {
 
-	return u[uIndex] * v[vIndex] + u[uIndex+1] * v[vIndex+1] + u[uIndex+2] * v[vIndex+2];
+        return u[uIndex] * v[vIndex] + u[uIndex+1] * v[vIndex+1] + u[uIndex+2] * v[vIndex+2];
 }
 
 __device__ void crossProduct(float* u, float* v, int uIndex, int vIndex, float* result) {
-	result[0] = u[vIndex + 1] * v[uIndex + 2] - u[vIndex + 2] * v[uIndex + 1]; //v X v2
+        result[0] = u[vIndex + 1] * v[uIndex + 2] - u[vIndex + 2] * v[uIndex + 1]; //v X v2
         result[1] = u[vIndex + 2] * v[uIndex + 0] - u[vIndex + 0] * v[uIndex + 2];
         result[2] = u[vIndex + 0] * v[uIndex + 1] - u[vIndex + 1] * v[uIndex + 0];
+}
+
+
+__device__ void normalize(float* v) {
+        float length = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        v[0] /= length;
+        v[1] /= length;
+        v[2] /= length;
+}
+
+
+__device__ void randomReflect(float* normals, int normalIndex, float* result, curandState* state) {
+	float sphere[3] = {randomFloat(-1.0, 1.0, state), randomFloat(-1.0, 1.0, state), randomFloat(-1.0, 1.0, state)};
+	while (sqrt(sphere[0]*sphere[0] + sphere[1]*sphere[1] + sphere[2]*sphere[2]) > 1.0 or innerProduct(normals, sphere, normalIndex, 0) < 0.0) {
+		sphere[0] = randomFloat(-1.0, 1.0, state);
+		sphere[1] = randomFloat(-1.0, 1.0, state);
+		sphere[2] = randomFloat(-1.0, 1.0, state);
+	}
+	normalize(sphere);
+
+	result[0] = sphere[0];
+	result[1] = sphere[1];
+	result[2] = sphere[2];
 }
 
 __device__ void reflect(float* incident, float* normal, int incidentIndex, int normalIndex, float* result) {
@@ -93,10 +122,6 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
         int closestIntersectionIndex = -1;
 	float triangle[9];
         for (int i = 0; i < (3 * 12); i += 3) {
-		//printf("%d:\n", i);
-		//printf("Face [%d, %d, %d]\n", faces[i], faces[i+1], faces[i+2]);
-		//printf("Triangle: [%f, %f, %f][%f, %f, %f][%f, %f, %f]", vertices[0],  vertices[1],  vertices[2],  vertices[3],  vertices[4],  vertices[5],  vertices[6],  vertices[7],  vertices[8]);
-
 		triangle[0] = vertices[3 * faces[i + 0] + 0];
 		triangle[1] = vertices[3 * faces[i + 0] + 1];
 		triangle[2] = vertices[3 * faces[i + 0] + 2];
@@ -111,9 +136,6 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
                 if (intersection < closestIntersection) {
                         closestIntersection = intersection;
                         closestIntersectionIndex = i;
-			//printf("Vertex [%f, %f, %f]\n", triangle[0], triangle[1], triangle[2]);
-                	//printf("Vertex [%f, %f, %f]\n", triangle[3], triangle[4], triangle[5]);
-                	//printf("Vertex [%f, %f, %f]\n", triangle[6], triangle[7], triangle[8]);
                 }
         }
 
@@ -126,50 +148,83 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
 }
 
 
-__global__ void rayTrace(float* field, float* vertices, int* faces, float* normals, Queue* q) {
+__global__ void rayTrace(float* bufferField, float* vertices, int* faces, float* normals, Queue* q, curandState* state) {
 	//printf("pop-");
 	Task task = q->pop();
 	//printf("popped\n");
 	if (!task.isValid) {
-		printf("Invalid task!\n");
+		//printf("Invalid task!\n");
 		return;
 	}
 	float rayStart[3] = {task.data[0], task.data[1], task.data[2]};
 	float rayDir[3] = {task.data[3], task.data[4], task.data[5]};
 	int index = (int)task.data[6];
 	int depth = (int)task.data[7];
-	printf("RayTrace %f\n", task.data[6]);
+	//printf("RayTrace %f\n", task.data[6]);
 
-	if (depth >= 10) {
-		field[index] = 0.0;
+	if (depth == BOUNCES - 2) { //Getting to max depth, shoot to light source
+		float lightSource[3] = {0.0, 9.9, -5.0};
+		rayDir[0] = lightSource[0] - rayStart[0];
+		rayDir[1] = lightSource[1] - rayStart[1];
+		rayDir[2] = lightSource[2] - rayStart[2];
 	}
+	if (depth == 0) {
+		bufferField[index] = 1.0;
+	}
+	if (depth >= BOUNCES - 1) {
+        //        bufferField[index] = 0.0;
+        }
+
 	hit rayHit = castRay(rayStart, rayDir, vertices, faces);
         if (rayHit.isHit) {
                 if (rayHit.index >= 10 * 3) {
-                        field[index] = 1.0;
+                        bufferField[index] *= 1.0;
                 } else {
                         //field[index] = innerProduct(normals, lightDirection, rayHit.index, 0);
-			field[index] = 0.5;
+			//Generate random ray
+			//BRDF with it
+			float randomRayDir[3];
+			randomReflect(normals, rayHit.index, randomRayDir, state);
+			float brdf = innerProduct(normals, randomRayDir, rayHit.index, 0);
+			bufferField[index] *= brdf;
+			/*if (depth == 2) {
+				printf("Ray [%f, %f, %f] - ", rayStart[0], rayStart[1], rayStart[2]);
+				printf("brdf: %f", brdf);
+				printf(" - value: %f", bufferField[index]);
+				printf("\n");
+			}*/
+
+			rayStart[0] += rayHit.t * rayDir[0];
+			rayStart[1] += rayHit.t * rayDir[1];
+			rayStart[2] += rayHit.t * rayDir[2];
+			
+			Task task = Task();
+	                task.data[0] = rayStart[0];
+	                task.data[1] = rayStart[1];
+	                task.data[2] = rayStart[2];
+	                task.data[3] = randomRayDir[0];
+	                task.data[4] = randomRayDir[1];
+	                task.data[5] = randomRayDir[2];
+	                task.data[6] = (float)index;
+               		task.data[7] = depth + 1;
+        	        task.isValid = true;
+
+	                q->push(task);
                 }
         } else {
-                field[index] = 0.0;
+                bufferField[index] = 0.0;
         }
 }
 
 
-__global__ void tracer(float* field, float* vertices, int* faces, float* normals, Queue* q) {
-	//printf("Face: [%d, %d, %d]\n", faces[0], faces[1], faces[2]);
-	//printf("Vertex: [%f, %f, %f]\n", vertices[0], vertices[1], vertices[2]);
-	printf("Start tracer");
+__global__ void tracer(float* field, float* bufferField, float* vertices, int* faces, float* normals, Queue* q, curandState* state) {
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	int xIndex = index % 32 - 16;
 	int yIndex = 16 - (int)(index / 32);
 
 	float lightDirection[3] = {0.707107, 0.0, 0.707107};
 
-	printf("AA");
-	//float rayStart[3] = {xIndex, yIndex, 10.0};
-	//float rayDirection[3] = {0.0, 0.0, -1.0};
+	curand_init(1337 + index, 0, 0, &state[index]);
 
 	float pixelCoordinates[3] = {xIndex, yIndex, 1.0};
 	float rayStart[3] = {0.0, 0.0, 5.0};
@@ -178,43 +233,32 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 	rayDirection[1] = pixelCoordinates[1] - rayStart[1];
 	rayDirection[2] = pixelCoordinates[2] - rayStart[2];
 
-	Task task = Task();
-	task.data[0] = rayStart[0];
-	task.data[1] = rayStart[1];
-	task.data[2] = rayStart[2];
-	task.data[3] = rayDirection[0];
-	task.data[4] = rayDirection[1];
-	task.data[5] = rayDirection[2];
-	task.data[6] = (float)index;
-	task.data[7] = 0.0;
-	task.isValid = true;
+	for (int i = 0; i < ITERATIONS; i++) {
+		//bufferField[index] = 1.0;
 
-	//printf("Push (%f)-", task.data[6]);
-	q->push(task);
-	//printf("Pushed\n");
+		Task task = Task();
+		task.data[0] = rayStart[0];
+		task.data[1] = rayStart[1];
+		task.data[2] = rayStart[2];
+		task.data[3] = rayDirection[0];
+		task.data[4] = rayDirection[1];
+		task.data[5] = rayDirection[2];
+		task.data[6] = (float)index;
+		task.data[7] = 0.0;
+		task.isValid = true;
 
-	if (xIndex == 0 && yIndex == 0) {
-		printf("Ray [%f, %f, %f]\n", rayDirection[0], rayDirection[1], rayDirection[2]);
-	}
-	
-	//rayTrace<<<1,1>>>(field, vertices, faces, normals, rayStart, rayDirection, index, 0);
-	rayTrace<<<1,1>>>(field, vertices, faces, normals, q);
-
-
-	/*hit rayHit = castRay(rayStart, rayDirection, vertices, faces);
-	if (rayHit.isHit) {
-		//field[index] = 1.0;
-		//printf("Normal: [%f, %f, %f]\n", normals[rayHit.index], normals[rayHit.index + 1], normals[rayHit.index + 2]);
-		//printf("Ray [%d, %d]", xIndex, yIndex);
-		//printf("dot product: %f \n", innerProduct(normals, lightDirection, rayHit.index, 0));
-		if (rayHit.index >= 10 * 3) {
-			field[index] = 1.0;
-		} else {
-			field[index] = innerProduct(normals, lightDirection, rayHit.index, 0);
+		q->push(task);
+		for (int bounce = 0; bounce < BOUNCES; bounce++) {
+			//Send #aliveRay kernels
+			//if (field[index] != 0.0) { //Alive ray
+				rayTrace<<<1,1>>>(bufferField, vertices, faces, normals, q, state);
+			//}
+			cudaDeviceSynchronize();
+			__syncthreads();
 		}
-	} else {
-		field[index] = 0.0;
-	}*/
+		field[index] += bufferField[index] / ITERATIONS;
+		__syncthreads();
+	}
 
 	//printf("Triangle: [%f, %f, %f], [%f, %f, %f], [%f, %f, %f]\n", triangles[0], triangles[1], triangles[2], triangles[3], triangles[4], triangles[5], triangles[6], triangles[7], triangles[8]);
 	//printf("Ray: [%f, %f, %f] -> [%f, %f, %f]\n", p[0], p[1], p[2], v[0], v[1], v[2]);
@@ -322,13 +366,6 @@ int main(void)
 	float bottom = height / -2.0;
 
 
-	float result[width][height];
-	for (int i = 0; i < width; i++) {
-		for (int j = 0; j < height; j++) {
-			result[i][j] = 0.0;
-		}
-	}
-
 	Queue* q = 0;
 	Queue* host_q = new Queue();
 	host_q->init();
@@ -346,16 +383,23 @@ int main(void)
 	int num_threads = width * height;
 	int num_blocks = 1;
 
-	float *host_array = 0;
-	host_array = (float*)malloc(num_bytes);
+	float *host_field = 0;
+	host_field = (float*)malloc(num_bytes);
+	for (int i = 0; i < width * height; i++) {
+		host_field[i] = 0.0; //We start with 0.0 
+	}
 
 	// cudaMalloc a device array
-	float *device_array = 0;
+	float *device_field = 0;
+	float *device_buffer_field = 0;
 	float *device_vertices = 0;
 	int *device_faces = 0;
 	float *device_normals = 0;
 
-	cudaMalloc((void**)&device_array, num_bytes);
+	cudaMalloc((void**)&device_field, num_bytes);
+	cudaMalloc((void**)&device_buffer_field, num_bytes);
+	//cudaMemset(&device_buffer_field
+
 
 	float faces_num_bytes = facesCount * sizeof(int);
 	float vertices_num_bytes = verticesCount * sizeof(float);
@@ -369,21 +413,27 @@ int main(void)
 	cudaMemcpy(device_faces, faces, faces_num_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(device_vertices, vertices, vertices_num_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(device_normals, normals, normals_num_bytes, cudaMemcpyHostToDevice);
+	cudaMemcpy(device_field, host_field, num_bytes, cudaMemcpyHostToDevice);
+	//cudaMemcpy(device_buffer_field, host_buffer_field, num_bytes, cudaMemcpyHostToDevice);
+
+
+	curandState *randomState;
+	cudaMalloc((void**)&randomState, width * height * sizeof(curandState));
 
 	//hello<<<1,1>>>();
 	//tracer<<<1,5>>>(device_array, device_vertices, device_faces, device_normals, q);
-	tracer<<<num_blocks, num_threads>>>(device_array, device_vertices, device_faces, device_normals, q);
+	tracer<<<num_blocks, num_threads>>>(device_field, device_buffer_field, device_vertices, device_faces, device_normals, q, randomState);
 	cudaDeviceSynchronize();
 
 	// download and inspect the result on the host:
-	cudaMemcpy(host_array, device_array, num_bytes, cudaMemcpyDeviceToHost);
+	cudaMemcpy(host_field, device_field, num_bytes, cudaMemcpyDeviceToHost);
 
 
 	for (int i = 0; i < width; i++) {
                 for (int j = 0; j < height; j++) {
 			//std::cout << result[i][j] << ", ";
 			//std::cout << host_array[i * width + j] << " ";
-			printf("%.1f ", host_array[i * width + j]);
+			printf("%.1f ", host_field[i * width + j]);
                 }
 		std::cout << std::endl;
         }
