@@ -89,7 +89,7 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
         float closestIntersection = INFINITY;
         int closestIntersectionIndex = -1;
 	float triangle[9];
-        for (int i = 0; i < (3 * 10); i += 3) {
+        for (int i = 0; i < (3 * 12); i += 3) {
 		//printf("%d:\n", i);
 		//printf("Face [%d, %d, %d]\n", faces[i], faces[i+1], faces[i+2]);
 		//printf("Triangle: [%f, %f, %f][%f, %f, %f][%f, %f, %f]", vertices[0],  vertices[1],  vertices[2],  vertices[3],  vertices[4],  vertices[5],  vertices[6],  vertices[7],  vertices[8]);
@@ -153,7 +153,11 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 		//printf("Normal: [%f, %f, %f]\n", normals[rayHit.index], normals[rayHit.index + 1], normals[rayHit.index + 2]);
 		//printf("Ray [%d, %d]", xIndex, yIndex);
 		//printf("dot product: %f \n", innerProduct(normals, lightDirection, rayHit.index, 0));
-		field[index] = innerProduct(normals, lightDirection, rayHit.index, 0);
+		if (rayHit.index >= 10 * 3) {
+			field[index] = 1.0;
+		} else {
+			field[index] = innerProduct(normals, lightDirection, rayHit.index, 0);
+		}
 	} else {
 		field[index] = 0.0;
 	}
@@ -207,8 +211,8 @@ int main(void)
 	int width = 32;
 	int height = 32;
 
-	const int trianglesCount = 10;
-	float vertices[8 * 3] = {
+	const int trianglesCount = 12;
+	float vertices[12 * 3] = {
 		-10.0, -10.0,   0.0, //0  //Left wall
 		-10.0, -10.0, -10.0, //1 
 		-10.0,  10.0, -10.0, //2
@@ -216,9 +220,14 @@ int main(void)
 		 10.0, -10.0,   0.0, //4  //Right wall
                  10.0, -10.0, -10.0, //5
                  10.0,  10.0, -10.0, //6
-                 10.0,  10.0,   0.0  //7
+                 10.0,  10.0,   0.0, //7
+	        -5.0,   9.9,   -8.0, //8 //Light source
+	        -5.0,   9.9,   -2.0, //9
+		 5.0,   9.9,   -2.0, //10
+                 5.0,   9.9,   -8.0  //11
+
 	};
-	int faces[trianglesCount * 3] = {
+	int faces[trianglesCount * 3] = { //x, y, z
 		0, 1, 2, //Left wall
 		0, 2, 3,
 		1, 5, 6, //Back wall
@@ -228,7 +237,9 @@ int main(void)
 		2, 7, 3, //Top wall
 		2, 6, 7,
 		0, 5, 1, //Bottom wall
-		0, 4, 5
+		0, 4, 5,
+		8, 9, 10, //Light source
+		8, 10, 11
 	};
 	float normals[trianglesCount * 3];
 	for (int i = 0; i < trianglesCount * 3; i += 3) {
@@ -286,7 +297,7 @@ int main(void)
 	cudaMalloc((void**)&device_array, num_bytes);
 
 	float faces_num_bytes = trianglesCount * 3 * sizeof(int);
-	float vertices_num_bytes = 3 * 8 * sizeof(float);
+	float vertices_num_bytes = 3 * 12 * sizeof(float);
 	float normals_num_bytes = trianglesCount * 3 * sizeof(float);
 	cudaMalloc((void**)&device_vertices, vertices_num_bytes);
 	cudaMalloc((void**)&device_faces, faces_num_bytes);
