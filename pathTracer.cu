@@ -8,6 +8,11 @@ struct hit {
 	float t;
 };
 
+
+__device__ void randomReflect(float* normal, int normalIndex, float* result) {
+
+}
+
 __device__ float innerProduct(float* u, float* v, int uIndex, int vIndex) {
 
 	return u[uIndex] * v[vIndex] + u[uIndex+1] * v[vIndex+1] + u[uIndex+2] * v[vIndex+2];
@@ -17,6 +22,14 @@ __device__ void crossProduct(float* u, float* v, int uIndex, int vIndex, float* 
 	result[0] = u[vIndex + 1] * v[uIndex + 2] - u[vIndex + 2] * v[uIndex + 1]; //v X v2
         result[1] = u[vIndex + 2] * v[uIndex + 0] - u[vIndex + 0] * v[uIndex + 2];
         result[2] = u[vIndex + 0] * v[uIndex + 1] - u[vIndex + 1] * v[uIndex + 0];
+}
+
+__device__ void reflect(float* incident, float* normal, int incidentIndex, int normalIndex, float* result) {
+        float d = innerProduct(incident, normal, incidentIndex, normalIndex);
+
+        result[0] = incident[incidentIndex + 0] - 2.0 * d * normal[normalIndex + 0];
+        result[1] = incident[incidentIndex + 1] - 2.0 * d * normal[normalIndex + 1];
+        result[2] = incident[incidentIndex + 2] - 2.0 * d * normal[normalIndex + 2];
 }
 
 __device__ float checkItersection(float* rayStart, float* rayDirection, float* triangles, int triangleIndex) {
@@ -91,23 +104,13 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
 		triangle[7] = vertices[3 * faces[i + 2] + 1];
 		triangle[8] = vertices[3 * faces[i + 2] + 2];
 
-		//printf("Vertex [%f, %f, %f]\n", triangle[0], triangle[1], triangle[2]);
-		//printf("Vertex [%f, %f, %f]\n", triangle[3], triangle[4], triangle[5]);
-		//printf("Vertex [%f, %f, %f]\n", triangle[6], triangle[7], triangle[8]);
-
-
-
                 intersection = checkItersection(rayStart, rayDirection, triangle, 0);
-		/*if (rayStart[0] == 0.0 and rayStart[1] == 0.0) {
-			printf("Vertex [%f, %f, %f]\n", triangle[0], triangle[1], triangle[2]);
-		}*/
                 if (intersection < closestIntersection) {
                         closestIntersection = intersection;
                         closestIntersectionIndex = i;
 			//printf("Vertex [%f, %f, %f]\n", triangle[0], triangle[1], triangle[2]);
                 	//printf("Vertex [%f, %f, %f]\n", triangle[3], triangle[4], triangle[5]);
                 	//printf("Vertex [%f, %f, %f]\n", triangle[6], triangle[7], triangle[8]);
-
                 }
         }
 
@@ -129,8 +132,20 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 	float lightDirection[3] = {0.707107, 0.0, 0.707107};
 
 	//printf("AA");
-	float rayStart[3] = {xIndex, yIndex, 10.0};
-	float rayDirection[3] = {0.0, 0.0, -1.0};
+	//float rayStart[3] = {xIndex, yIndex, 10.0};
+	//float rayDirection[3] = {0.0, 0.0, -1.0};
+
+	float pixelCoordinates[3] = {xIndex, yIndex, 1.0};
+	float rayStart[3] = {0.0, 0.0, 5.0};
+	float rayDirection[3];
+	rayDirection[0] = pixelCoordinates[0] - rayStart[0];
+	rayDirection[1] = pixelCoordinates[1] - rayStart[1];
+	rayDirection[2] = pixelCoordinates[2] - rayStart[2];
+
+	if (xIndex == 0 && yIndex == 0) {
+		printf("Ray [%f, %f, %f]\n", rayDirection[0], rayDirection[1], rayDirection[2]);
+	}
+	
 
 	hit rayHit = castRay(rayStart, rayDirection, vertices, faces);
 	if (rayHit.isHit) {
@@ -296,7 +311,7 @@ int main(void)
                 for (int j = 0; j < height; j++) {
 			//std::cout << result[i][j] << ", ";
 			//std::cout << host_array[i * width + j] << " ";
-			printf("%.2f ", host_array[i * width + j]);
+			printf("%.1f ", host_array[i * width + j]);
                 }
 		std::cout << std::endl;
         }
