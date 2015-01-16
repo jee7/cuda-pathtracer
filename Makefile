@@ -3,7 +3,7 @@ COMPILER = nvcc
 
 # compilation settings, optimization, precision, parallelization...  
 # 
-FLAGS = -arch=sm_35 #-O2 
+FLAGS = -arch=sm_35 -lcudadevrt --relocatable-device-code true #-O2 
 
 # libraries.. /<libdir>/libmkl_blas.[so|a] 
 #LIBS =  -L/home/hpc_jee7/devil/lib/lib -lIL -lILU -lILUT #  -L/home/hpc_jee7/devil/lib/lib/ -llibILU  -L/home/hpc_jee7/devil/lib/lib -llibILUT

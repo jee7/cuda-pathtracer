@@ -2,12 +2,15 @@
 #include <iostream>
 #include <math.h>
 
+#include "cudaQueue.cu"
+
 struct hit {
 	bool isHit;
 	int index;
 	float t;
 };
 
+__device__ Queue q;
 
 __device__ void randomReflect(float* normal, int normalIndex, float* result) {
 
@@ -122,16 +125,49 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
 	return rayHit;
 }
 
-__global__ void tracer(float* field, float* vertices, int* faces, float* normals) {
+
+__global__ void rayTrace(float* field, float* vertices, int* faces, float* normals, Queue* q) {
+	//printf("pop-");
+	Task task = q->pop();
+	//printf("popped\n");
+	if (!task.isValid) {
+		printf("Invalid task!\n");
+		return;
+	}
+	float rayStart[3] = {task.data[0], task.data[1], task.data[2]};
+	float rayDir[3] = {task.data[3], task.data[4], task.data[5]};
+	int index = (int)task.data[6];
+	int depth = (int)task.data[7];
+	printf("RayTrace %f\n", task.data[6]);
+
+	if (depth >= 10) {
+		field[index] = 0.0;
+	}
+	hit rayHit = castRay(rayStart, rayDir, vertices, faces);
+        if (rayHit.isHit) {
+                if (rayHit.index >= 10 * 3) {
+                        field[index] = 1.0;
+                } else {
+                        //field[index] = innerProduct(normals, lightDirection, rayHit.index, 0);
+			field[index] = 0.5;
+                }
+        } else {
+                field[index] = 0.0;
+        }
+}
+
+
+__global__ void tracer(float* field, float* vertices, int* faces, float* normals, Queue* q) {
 	//printf("Face: [%d, %d, %d]\n", faces[0], faces[1], faces[2]);
 	//printf("Vertex: [%f, %f, %f]\n", vertices[0], vertices[1], vertices[2]);
+	printf("Start tracer");
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	int xIndex = index % 32 - 16;
 	int yIndex = 16 - (int)(index / 32);
 
 	float lightDirection[3] = {0.707107, 0.0, 0.707107};
 
-	//printf("AA");
+	printf("AA");
 	//float rayStart[3] = {xIndex, yIndex, 10.0};
 	//float rayDirection[3] = {0.0, 0.0, -1.0};
 
@@ -142,12 +178,30 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 	rayDirection[1] = pixelCoordinates[1] - rayStart[1];
 	rayDirection[2] = pixelCoordinates[2] - rayStart[2];
 
+	Task task = Task();
+	task.data[0] = rayStart[0];
+	task.data[1] = rayStart[1];
+	task.data[2] = rayStart[2];
+	task.data[3] = rayDirection[0];
+	task.data[4] = rayDirection[1];
+	task.data[5] = rayDirection[2];
+	task.data[6] = (float)index;
+	task.data[7] = 0.0;
+	task.isValid = true;
+
+	//printf("Push (%f)-", task.data[6]);
+	q->push(task);
+	//printf("Pushed\n");
+
 	if (xIndex == 0 && yIndex == 0) {
 		printf("Ray [%f, %f, %f]\n", rayDirection[0], rayDirection[1], rayDirection[2]);
 	}
 	
+	//rayTrace<<<1,1>>>(field, vertices, faces, normals, rayStart, rayDirection, index, 0);
+	rayTrace<<<1,1>>>(field, vertices, faces, normals, q);
 
-	hit rayHit = castRay(rayStart, rayDirection, vertices, faces);
+
+	/*hit rayHit = castRay(rayStart, rayDirection, vertices, faces);
 	if (rayHit.isHit) {
 		//field[index] = 1.0;
 		//printf("Normal: [%f, %f, %f]\n", normals[rayHit.index], normals[rayHit.index + 1], normals[rayHit.index + 2]);
@@ -160,7 +214,7 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 		}
 	} else {
 		field[index] = 0.0;
-	}
+	}*/
 
 	//printf("Triangle: [%f, %f, %f], [%f, %f, %f], [%f, %f, %f]\n", triangles[0], triangles[1], triangles[2], triangles[3], triangles[4], triangles[5], triangles[6], triangles[7], triangles[8]);
 	//printf("Ray: [%f, %f, %f] -> [%f, %f, %f]\n", p[0], p[1], p[2], v[0], v[1], v[2]);
@@ -212,7 +266,10 @@ int main(void)
 	int height = 32;
 
 	const int trianglesCount = 12;
-	float vertices[12 * 3] = {
+	const int verticesCount = 12 * 3; //This is not triangles count * 3, some triangles share
+	const int facesCount = trianglesCount * 3; //Each triangle has a face
+
+	float vertices[verticesCount] = {
 		-10.0, -10.0,   0.0, //0  //Left wall
 		-10.0, -10.0, -10.0, //1 
 		-10.0,  10.0, -10.0, //2
@@ -227,7 +284,7 @@ int main(void)
                  5.0,   9.9,   -8.0  //11
 
 	};
-	int faces[trianglesCount * 3] = { //x, y, z
+	int faces[facesCount] = { //x, y, z
 		0, 1, 2, //Left wall
 		0, 2, 3,
 		1, 5, 6, //Back wall
@@ -241,8 +298,8 @@ int main(void)
 		8, 9, 10, //Light source
 		8, 10, 11
 	};
-	float normals[trianglesCount * 3];
-	for (int i = 0; i < trianglesCount * 3; i += 3) {
+	float normals[facesCount]; //Each face has a normal
+	for (int i = 0; i < facesCount; i += 3) {
 		vector v1 = makeVector(vertices, vertices, 3 * faces[i + 0], 3 * faces[i + 1]);
 		vector v2 = makeVector(vertices, vertices, 3 * faces[i + 0], 3 * faces[i + 2]);
 		printf("v1: [%f, %f, %f]\n", v1.x, v1.y, v1.z);
@@ -264,15 +321,6 @@ int main(void)
 	float top = height / 2.0;
 	float bottom = height / -2.0;
 
-	//To normalized device coordinates
-	/*
-	for (int i = 0; i < trianglesCount; i++) {
-		for (int v = 0; v < 3; v++) {
-			triangles[i][v][0] = triangles[i][v][0]	/ right;
-			triangles[i][v][1] = triangles[i][v][1] / top;
-			triangles[i][v][2] = triangles[i][v][2] / far;
-		}
-	}*/
 
 	float result[width][height];
 	for (int i = 0; i < width; i++) {
@@ -280,6 +328,19 @@ int main(void)
 			result[i][j] = 0.0;
 		}
 	}
+
+	Queue* q = 0;
+	Queue* host_q = new Queue();
+	host_q->init();
+	cudaMalloc((void **)&q, sizeof(Queue));
+	printf("Queue size: %d\n", sizeof(Queue));
+
+	cudaError_t error = cudaMemcpy(q, host_q, sizeof(Queue), cudaMemcpyHostToDevice);
+
+	if(error != cudaSuccess) {
+	    printf("CUDA error: %s\n", cudaGetErrorString(error));
+	}
+
 
 	int num_bytes = width * height * sizeof(float);
 	int num_threads = width * height;
@@ -296,9 +357,9 @@ int main(void)
 
 	cudaMalloc((void**)&device_array, num_bytes);
 
-	float faces_num_bytes = trianglesCount * 3 * sizeof(int);
-	float vertices_num_bytes = 3 * 12 * sizeof(float);
-	float normals_num_bytes = trianglesCount * 3 * sizeof(float);
+	float faces_num_bytes = facesCount * sizeof(int);
+	float vertices_num_bytes = verticesCount * sizeof(float);
+	float normals_num_bytes = facesCount * sizeof(float);
 	cudaMalloc((void**)&device_vertices, vertices_num_bytes);
 	cudaMalloc((void**)&device_faces, faces_num_bytes);
 	cudaMalloc((void**)&device_normals, normals_num_bytes);
@@ -310,8 +371,8 @@ int main(void)
 	cudaMemcpy(device_normals, normals, normals_num_bytes, cudaMemcpyHostToDevice);
 
 	//hello<<<1,1>>>();
-	//tracer<<<1,1>>>(device_array, device_vertices, device_faces, device_normals);
-	tracer<<<num_blocks, num_threads>>>(device_array, device_vertices, device_faces, device_normals);
+	//tracer<<<1,5>>>(device_array, device_vertices, device_faces, device_normals, q);
+	tracer<<<num_blocks, num_threads>>>(device_array, device_vertices, device_faces, device_normals, q);
 	cudaDeviceSynchronize();
 
 	// download and inspect the result on the host:
