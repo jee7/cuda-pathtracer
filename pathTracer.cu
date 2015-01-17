@@ -6,7 +6,7 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 1
+#define ITERATIONS 10
 #define BOUNCES 3 //At least 3!!
 #define WIDTH 32
 #define HEIGHT 32
