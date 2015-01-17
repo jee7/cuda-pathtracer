@@ -1,19 +1,22 @@
 struct Task {
+	float data[6];
 	bool isValid;
-	float data[8];
+	float value;
+	int index;
+	short depth; 
 };
-#define MAX_SIZE 1024
 
 class Queue {
 
-	Task in[MAX_SIZE];
-	Task out[MAX_SIZE];
 	int i;
 	int j;
 	int lock;
 
 	public:
-		__host__ void init();
+		Task* data;
+		int size;
+
+		__host__ __device__ void init(int size);
 		__device__ void push(Task t);
 		__device__ Task pop();
 	private:
@@ -22,79 +25,50 @@ class Queue {
 };
 
 
-__host__ void Queue::init() {
-	i = MAX_SIZE;
-	j = 0;
-	lock = 0;
-	//in = inValues;
-	//out = outValues;
+__host__ __device__ void Queue::init(int size) {
+	this->i = 0;
+	this->j = 0;
+	this->lock = 0;
+
+	this->data = new Task[size];
+	this->size = size;
+	
 	printf("Init queue, i=%d", i);
 }
 
 __device__ void Queue::push(Task t) {
-	//while (atomicCAS(&lock, 0, 1) == 1) {};
 
-	//in[i] = t;
-        //i--;
-	//atomicAdd(&i, -1);
+	int currentJ = atomicAdd(&j, 1);
 
-	if (i == 0) {
+	if (currentJ - i >= size) {
 		printf("Queue is full!!\n");
 	} else {
-		int currentI = atomicAdd(&i, -1) - 1;
-		in[currentI] = t;
-		//printf("Added to q (%f), i=%d\n", t.data[6], currentI);
+		int index = (currentJ) % size;
+		data[index] = t;
+		//printf("Push (%d)\n", index);
+		//printf("Added to q (%d), i=%d\n", t.index, currentI);
 		//printf("%d, ", currentI);
 	}
-	lock = 0;
 }
 
 __device__ Task Queue::pop() {
-	//while (atomicCAS(&lock, 0, 1) == 1) {};
-	while(lock == 1){}
 
-	if (j == 0) {
-		swap();
-	}
-	Task resultTask = Task();
+	Task resultTask;
 
-	if (j <= 0) {
-		//printf("Queue is empty");
+	int currentI = atomicAdd(&i, 1);
+	if (currentI >= j) {
+		//printf("Queue is empty (i=%d j=%d)", i, j);
+		resultTask = Task();
 		resultTask.isValid = false;
 	} else {
-		int currentJ = atomicAdd(&j, -1) - 1;
-		//printf("Pop (%f), j=%d", out[currentJ].data[6], currentJ);
-		resultTask = out[currentJ];
+		int index = currentI % size;
+		//printf("Pop (%d)\n", index);
+
+		Task a = Task(); a.isValid = false;
+		resultTask = data[index];
+		data[index] = a;
+		
 	}
-	lock = 0;
 
 	return resultTask;
-}
-
-__device__ void Queue::swap() {
-	//printf("Current lock: %d", atomicCAS(&lock, 0, 1));
-	//atomicAdd(lock, 1);
-	//while (atomicCAS(&lock, 0, 1) == 1) {};
-
-	if (j == 0 && i < MAX_SIZE) {
-		/*printf("Swap:" );
-	        printf("j=%d, ", j);
-	        printf("i=%d\n", i);*/
-
-		Task el;
-		for(int u = 0; u < MAX_SIZE; u++) {
-			el = in[u];
-			in[u] = out[MAX_SIZE - u - 1];
-			out[MAX_SIZE - u - 1] = el;
-		}
-		j = MAX_SIZE - i;
-		i = MAX_SIZE;
-
-		/*printf("Swap:" );
-	        printf("j=%d, ", j);
-	        printf("i=%d\n", i);*/
-	}
-	lock = 0;
-	//atomicAdd(lock, -1);
-
 }

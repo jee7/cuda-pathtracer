@@ -15,7 +15,7 @@ LIBS = -lcudadevrt -lcurand -I/usr/local/cuda/include/
 SOURCES = pathTracer.cu
 
 test: $(SOURCES)
-	${COMPILER} -g -o pathTracer $(FLAGS) $(SOURCES) $(LIBS) 
+	${COMPILER} -g -G -o pathTracer $(FLAGS) $(SOURCES) $(LIBS) 
 
 clean:
 	rm *.o 
