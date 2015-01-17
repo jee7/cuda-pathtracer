@@ -6,10 +6,10 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 10
-#define BOUNCES 3 //At least 3!!
-#define WIDTH 32
-#define HEIGHT 32
+#define ITERATIONS 800
+#define BOUNCES 4 //At least 3!!
+#define WIDTH 64
+#define HEIGHT 64
 
 struct hit {
 	bool isHit;
@@ -123,7 +123,7 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
         float closestIntersection = INFINITY;
         int closestIntersectionIndex = -1;
 	float triangle[9];
-        for (int i = 0; i < (3 * 12); i += 3) {
+        for (int i = 0; i < (3 * 14); i += 3) {
 		triangle[0] = vertices[3 * faces[i + 0] + 0];
 		triangle[1] = vertices[3 * faces[i + 0] + 1];
 		triangle[2] = vertices[3 * faces[i + 0] + 2];
@@ -150,13 +150,15 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
 }
 
 
-__global__ void rayTrace(float* bufferField, float* field, float* vertices, int* faces, float* normals, Queue* q, curandState* state) {
+__global__ void rayTrace(float* field, float* vertices, int* faces, float* normals, Queue* q, curandState* state) {
 	//printf("pop-");
 	Task task = q->pop();
 	//printf("popped\n");
 	if (!task.isValid) {
 		//printf("Invalid task!\n");
 		return;
+	} else {
+		//printf("Valid!\n");
 	}
 	float rayStart[3] = {task.data[0], task.data[1], task.data[2]};
 	float rayDir[3] = {task.data[3], task.data[4], task.data[5]};
@@ -171,72 +173,52 @@ __global__ void rayTrace(float* bufferField, float* field, float* vertices, int*
 		rayDir[1] = lightSource[1] - rayStart[1];
 		rayDir[2] = lightSource[2] - rayStart[2];
 	}
-	if (depth == 0) {
-		//bufferField[index] = 1.0;
-	}
 	if (depth >= BOUNCES - 1) { //Max depth, add our value
-        //        bufferField[index] = 0.0;
+		//printf("Finish %f\n", task.value);
 		atomicAdd(&(field[index]), task.value / ITERATIONS);
 		return;
         }
 
 	hit rayHit = castRay(rayStart, rayDir, vertices, faces);
         if (rayHit.isHit) {
-                if (rayHit.index >= 10 * 3) {
-			if (depth == 0) {
-				atomicExch(&(field[index]), 1.0);
-			}
-                        //bufferField[index] *= 1.0;
+		bool isLightSource = rayHit.index >= 10 * 3;
+                if (isLightSource && depth == 0) {
+			atomicExch(&(field[index]), 1.0); //We hit the light source straight away
                 } else {
-                        //field[index] = innerProduct(normals, lightDirection, rayHit.index, 0);
-			//Generate random ray
-			//BRDF with it
-			float randomRayDir[3];
-			randomReflect(normals, rayHit.index, randomRayDir, state);
-			float brdf = innerProduct(normals, randomRayDir, rayHit.index, 0);
-			//bufferField[index] *= brdf;
-			/*if (depth == 2) {
-				printf("Ray [%f, %f, %f] - ", rayStart[0], rayStart[1], rayStart[2]);
-				printf("brdf: %f", brdf);
-				printf(" - value: %f", bufferField[index]);
-				printf("\n");
-			}*/
+			if (isLightSource) {
+				atomicAdd(&(field[index]), task.value / ITERATIONS); //We hit the light, write the accumulated value
+                        } else {
 
-			rayStart[0] += rayHit.t * rayDir[0];
-			rayStart[1] += rayHit.t * rayDir[1];
-			rayStart[2] += rayHit.t * rayDir[2];
-			
-			/*Task newTask = Task();
-	                newTask.data[0] = rayStart[0];
-	                newTask.data[1] = rayStart[1];
-	                newTask.data[2] = rayStart[2];
-	                newTask.data[3] = randomRayDir[0];
-	                newTask.data[4] = randomRayDir[1];
-	                newTask.data[5] = randomRayDir[2];
-			newTask.index   = index;
-			newTask.depth   = depth + 1;
-			newTask.value   = task.value * brdf;
-        	        newTask.isValid = true;
-			q->push(newTask);*/
-			
-			task.data[0] = rayStart[0];
-			task.data[1] = rayStart[1];
-			task.data[2] = rayStart[2];
-			task.data[3] = randomRayDir[0];
-			task.data[4] = randomRayDir[1];
-			task.data[5] = randomRayDir[2];
-			task.depth  += 1;
-			task.value  *= brdf;
+				//Generate random ray
+				float randomRayDir[3];
+				randomReflect(normals, rayHit.index, randomRayDir, state);
 
-	                q->push(task);
+				float reflectance = 0.5; //Can be color vector
+				float brdf = 2.0 * reflectance * innerProduct(normals, randomRayDir, rayHit.index, 0);
+
+				rayStart[0] += rayHit.t * rayDir[0];
+				rayStart[1] += rayHit.t * rayDir[1];
+				rayStart[2] += rayHit.t * rayDir[2];
+			
+				task.data[0] = rayStart[0];
+				task.data[1] = rayStart[1];
+				task.data[2] = rayStart[2];
+				task.data[3] = randomRayDir[0];
+				task.data[4] = randomRayDir[1];
+				task.data[5] = randomRayDir[2];
+				task.depth  += 1;
+				task.value  *= brdf;
+
+		                q->push(task);
+			}
                 }
         } else {
-                //bufferField[index] = 0.0;
+		//printf("Miss\n");
         }
 }
 
 
-__global__ void tracer(float* field, float* bufferField, float* vertices, int* faces, float* normals, Queue* q, curandState* state) {
+__global__ void tracer(float* field, float* vertices, int* faces, float* normals, Queue* q, curandState* state) {
 
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	int xIndex = index % HEIGHT - WIDTH / 2;
@@ -246,15 +228,17 @@ __global__ void tracer(float* field, float* bufferField, float* vertices, int* f
 
 	curand_init(1337 + index, 0, 0, &state[index]);
 
-	float pixelCoordinates[3] = {xIndex, yIndex, 1.0};
-	float rayStart[3] = {0.0, 0.0, 5.0};
+	float zoom = WIDTH / 21.0;
+	//zoom = 1.0;
+
+	float pixelCoordinates[3] = {xIndex / zoom, yIndex / zoom, 1.0}; //Clipping box
+	float rayStart[3] = {0.0, 0.0, 20.0}; //Camera position
 	float rayDirection[3];
 	rayDirection[0] = pixelCoordinates[0] - rayStart[0];
 	rayDirection[1] = pixelCoordinates[1] - rayStart[1];
 	rayDirection[2] = pixelCoordinates[2] - rayStart[2];
 
 	for (int i = 0; i < ITERATIONS; i++) {
-		//bufferField[index] = 1.0;
 
 		Task task = Task();
 		task.data[0] = rayStart[0];
@@ -269,18 +253,22 @@ __global__ void tracer(float* field, float* bufferField, float* vertices, int* f
 		task.isValid = true;
 
 		q->push(task);
-		for (int bounce = 0; bounce < BOUNCES; bounce++) {
+		//for (int bounce = 0; bounce < BOUNCES; bounce++) {
 			//Send #aliveRay kernels
 			//if (field[index] != 0.0) { //Alive ray
-				rayTrace<<<1,1>>>(bufferField, field, vertices, faces, normals, q, state);
+			//	rayTrace<<<1,4>>>(field, vertices, faces, normals, q, state);
 			//}
 			//cudaDeviceSynchronize();
 			//__syncthreads();
-		}
-		//field[index] += bufferField[index] / ITERATIONS;
-		//atomicAdd(&(field[index]), bufferField[index] / ITERATIONS);
+		//}
 		//__syncthreads();
 	}
+	int numBlocks = ITERATIONS;
+	int numThreads = BOUNCES;
+        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, q, state);
+	cudaDeviceSynchronize();
+
+                        
 
 	//printf("Triangle: [%f, %f, %f], [%f, %f, %f], [%f, %f, %f]\n", triangles[0], triangles[1], triangles[2], triangles[3], triangles[4], triangles[5], triangles[6], triangles[7], triangles[8]);
 	//printf("Ray: [%f, %f, %f] -> [%f, %f, %f]\n", p[0], p[1], p[2], v[0], v[1], v[2]);
@@ -332,19 +320,19 @@ int main(void)
 	int height = HEIGHT;
 	int size = width * height;
 
-	const int trianglesCount = 12;
+	const int trianglesCount = 14;
 	const int verticesCount = 12 * 3; //This is not triangles count * 3, some triangles share
 	const int facesCount = trianglesCount * 3; //Each triangle has a face
 
 	float vertices[verticesCount] = {
-		-10.0, -10.0,   6.0, //0  //Left wall
+		-10.0, -10.0,   22.0, //0  //Left wall
 		-10.0, -10.0, -10.0, //1 
 		-10.0,  10.0, -10.0, //2
-		-10.0,  10.0,   6.0, //3
-		 10.0, -10.0,   6.0, //4  //Right wall
+		-10.0,  10.0,   22.0, //3
+		 10.0, -10.0,   22.0, //4  //Right wall
                  10.0, -10.0, -10.0, //5
                  10.0,  10.0, -10.0, //6
-                 10.0,  10.0,   6.0, //7
+                 10.0,  10.0,   22.0, //7
 	        -5.0,   9.9,   -8.0, //8 //Light source
 	        -5.0,   9.9,   -2.0, //9
 		 5.0,   9.9,   -2.0, //10
@@ -362,10 +350,12 @@ int main(void)
 		2, 6, 7,
 		0, 5, 1, //Bottom wall
 		0, 4, 5,
-		/*0, 7, 3, //Front wall?
-		0, 4, 7,*/
-		8, 9, 10, //Light source
-		8, 10, 11
+		0, 7, 3, //Front wall?
+		0, 4, 7,
+		10, 9, 8, //Light source
+		11, 10, 8
+		/*8, 9, 10, //Wrong normals light source?
+		8, 10, 11*/
 	};
 	float normals[facesCount]; //Each face has a normal
 	for (int i = 0; i < facesCount; i += 3) {
@@ -455,15 +445,11 @@ int main(void)
 
 	// cudaMalloc a device array
 	float *device_field = 0;
-	float *device_buffer_field = 0;
 	float *device_vertices = 0;
 	int *device_faces = 0;
 	float *device_normals = 0;
 
 	cudaMalloc((void**)&device_field, num_bytes);
-	cudaMalloc((void**)&device_buffer_field, num_bytes);
-	//cudaMemset(&device_buffer_field
-
 
 	float faces_num_bytes = facesCount * sizeof(int);
 	float vertices_num_bytes = verticesCount * sizeof(float);
@@ -478,7 +464,6 @@ int main(void)
 	cudaMemcpy(device_vertices, vertices, vertices_num_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(device_normals, normals, normals_num_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(device_field, host_field, num_bytes, cudaMemcpyHostToDevice);
-	//cudaMemcpy(device_buffer_field, host_buffer_field, num_bytes, cudaMemcpyHostToDevice);
 
 
 	curandState *randomState;
@@ -486,10 +471,9 @@ int main(void)
 
 	cudaDeviceSynchronize();
 
-
 	//hello<<<1,1>>>();
 	//tracer<<<1,5>>>(device_array, device_vertices, device_faces, device_normals, q);
-	tracer<<<num_blocks, num_threads>>>(device_field, device_buffer_field, device_vertices, device_faces, device_normals, q, randomState);
+	tracer<<<num_blocks, num_threads>>>(device_field, device_vertices, device_faces, device_normals, q, randomState);
 	cudaDeviceSynchronize();
 
 	// download and inspect the result on the host:
@@ -500,7 +484,7 @@ int main(void)
                 for (int j = 0; j < height; j++) {
 			//std::cout << result[i][j] << ", ";
 			//std::cout << host_array[i * width + j] << " ";
-			printf("%.1f ", host_field[i * width + j]);
+			printf("%.2f ", host_field[i * width + j]);
                 }
 		std::cout << std::endl;
         }
