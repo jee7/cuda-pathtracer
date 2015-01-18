@@ -76,7 +76,6 @@ __device__ Task Queue::pop() {
 		Task a = Task(); a.isValid = false;
 		resultTask = data[index];
 		data[index] = a;
-		
 	}
 
 	return resultTask;

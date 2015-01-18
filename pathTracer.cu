@@ -2,15 +2,17 @@
 #include <iostream>
 #include <fstream>
 #include <math.h>
+#include <ctime>
 
 #include "cudaQueue.cu"
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 20
+#define ITERATIONS 800
 #define BOUNCES 4 //At least 3!!
 #define WIDTH 128
 #define HEIGHT 128
+#define FIELD_SIZE WIDTH*HEIGHT
 
 struct hit {
 	bool isHit;
@@ -237,65 +239,68 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 	int yIndex = HEIGHT / 2 - (int)(index / WIDTH);
 	long int rayCount = ITERATIONS * BOUNCES;
 
-	//float lightDirection[3] = {0.707107, 0.0, 0.707107};
+	if (index >= FIELD_SIZE) { //Some threads are outside the field
+		//printf("Dead %d\n", index);
+		rayCount = 0;
+	} else {
 
-	curand_init(1337 + index, 0, 0, &state[index]);
+		curand_init(1337 + index, 0, 0, &state[index]);
 
-	float zoom = WIDTH / 21.0;
-	//zoom = 1.0;
+		float zoom = WIDTH / 21.0;
 
-	float pixelCoordinates[3] = {xIndex / zoom, yIndex / zoom, 1.0}; //Clipping box
-	float rayStart[3] = {0.0, 0.0, 20.0}; //Camera position
-	float rayDirection[3];
-	rayDirection[0] = pixelCoordinates[0] - rayStart[0];
-	rayDirection[1] = pixelCoordinates[1] - rayStart[1];
-	rayDirection[2] = pixelCoordinates[2] - rayStart[2];
+		float pixelCoordinates[3] = {xIndex / zoom, yIndex / zoom, 1.0}; //Clipping box
+		float rayStart[3] = {0.0, 0.0, 20.0}; //Camera position
+		float rayDirection[3];
+		rayDirection[0] = pixelCoordinates[0] - rayStart[0];
+		rayDirection[1] = pixelCoordinates[1] - rayStart[1];
+		rayDirection[2] = pixelCoordinates[2] - rayStart[2];
 
-	for (int i = 0; i < ITERATIONS; i++) {
+		for (int i = 0; i < ITERATIONS; i++) {
 
-		Task task = Task();
-		task.data[0]  = rayStart[0];
-		task.data[1]  = rayStart[1];
-		task.data[2]  = rayStart[2];
-		task.data[3]  = rayDirection[0];
-		task.data[4]  = rayDirection[1];
-		task.data[5]  = rayDirection[2];
-		task.index    = index * 3;
-		task.depth    = 0;
-		task.value[0] = 1.0;
-		task.value[1] = 1.0;
-		task.value[2] = 1.0;
-		task.isValid = true;
+			Task task = Task();
+			task.data[0]  = rayStart[0];
+			task.data[1]  = rayStart[1];
+			task.data[2]  = rayStart[2];
+			task.data[3]  = rayDirection[0];
+			task.data[4]  = rayDirection[1];
+			task.data[5]  = rayDirection[2];
+			task.index    = index * 3;
+			task.depth    = 0;
+			task.value[0] = 1.0;
+			task.value[1] = 1.0;
+			task.value[2] = 1.0;
+			task.isValid = true;
 
-		bool canPush = q->push(task);
-		if (!canPush) {
-			printf("Could not add initial rays! Very bad!"); return;
-			//Can not resolve the rays here, because different blocks can not be synchronized
-			/*if (randomFloat(0, 1, state) < 0.01) {
-				printf("Presending rays\n");
-				int numThreads = 128;
-				int numBlocks = (int)(ITERATIONS / 128) + 1;
-				rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state);
-				rayCount -= numBlocks * numThreads;
+			bool canPush = q->push(task);
+			if (!canPush) {
+				printf("Could not add initial rays! Very bad!"); return;
+				//Can not resolve the rays here, because different blocks can not be synchronized
 			}
-			i--;*/
 		}
 	}
+	//Would this be really needed?
+	//cudaDeviceSynchronize();
+	//__syncthreads();
 
 	if (rayCount > 0) {
 		int numBlocks, numThreads;
-		if (rayCount < 128) {
+		if (rayCount < 1024) {
 			numBlocks = 1;
 			numThreads = rayCount;
 		} else {
-			numBlocks = rayCount / 128;
-			numThreads = 128;
+			numBlocks = int(rayCount / 512) + 1;
+			numThreads = 512;
+			
 		}
+		//printf("Ray count: %ld\n", rayCount);
+		//printf("blocks %d, threads %d\n", numBlocks, numThreads);
 	        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state);
 	}
-	//cudaDeviceSynchronize();
 
-                        
+	cudaError_t error = cudaGetLastError();
+        if (error != cudaSuccess) {
+                printf("CUDA error: %s\n", cudaGetErrorString(error));
+        }
 
 	//printf("Triangle: [%f, %f, %f], [%f, %f, %f], [%f, %f, %f]\n", triangles[0], triangles[1], triangles[2], triangles[3], triangles[4], triangles[5], triangles[6], triangles[7], triangles[8]);
 	//printf("Ray: [%f, %f, %f] -> [%f, %f, %f]\n", p[0], p[1], p[2], v[0], v[1], v[2]);
@@ -417,16 +422,10 @@ int main(void)
 		1.0, 1.0, 1.0 
 	};
 
-	/*float near = 0.0;
-	float far = 100.0;
-	float left = width / -2.0;
-	float right = width / 2.0;
-	float top = height / 2.0;
-	float bottom = height / -2.0;
-	*/
+	std::clock_t timeStart = std::clock();
 
 	//Size should be at least width*height?
-	unsigned long long int memoryCap = 1000000000; //1GB
+	unsigned long long int memoryCap = 3000000000; //3GB
 	//memoryCap = 1000000;
 	printf("q_size = %llu vs %llu\n",(unsigned long long int)(memoryCap / sizeof(Task)), size * BOUNCES * ITERATIONS );
 	printf("sizeof(Task) = %d\n", sizeof(Task));
@@ -466,17 +465,18 @@ int main(void)
 
 
 	int num_bytes = size * 3 * sizeof(float);
-	int num_threads, num_blocks;
-	if (size >= 128) {
-		num_threads = 128;
-		num_blocks = size / 128;
+	int num_threads, num_blocks, total_threads;
+	if (size >= 1024) {
+		num_threads = 1024;
+		num_blocks = (size / 1024) + 1;
 	} else if (size >= 16) {
 		num_threads = 16;
-		num_blocks = size / 16;
+		num_blocks = (size / 16) + 1;
 	} else {
 		num_threads = size;
 		num_blocks = 1;
 	}
+	total_threads = num_blocks * num_threads;
 	printf("Blocks: %d, ThreadPerBlock: %d\n", num_blocks, num_threads);
 
 	/*
@@ -520,22 +520,28 @@ int main(void)
 
 
 	curandState *randomState;
-	cudaMalloc((void**)&randomState, size * sizeof(curandState));
-
-	cudaDeviceSynchronize();
+	cudaMalloc((void**)&randomState, total_threads * sizeof(curandState));
 
 	//hello<<<1,1>>>();
-	//tracer<<<1,5>>>(device_array, device_vertices, device_faces, device_normals, q);
 	tracer<<<num_blocks, num_threads>>>(device_field, device_vertices, device_faces, device_normals, device_colors, q, randomState);
-	cudaDeviceSynchronize();
+	
+	//This is not needed, cudaMemcpy() will block
+	//cudaDeviceSynchronize();
 
 	// download and inspect the result on the host:
 	cudaMemcpy(host_field, device_field, num_bytes, cudaMemcpyDeviceToHost);
 
+
+	std::clock_t timeStop = clock();
+	const double timeDifference = double(timeStop - timeStart) / CLOCKS_PER_SEC;
+	std::cout << "Kernel took " << timeDifference << "s.\n";
+
+
+
 	char buff[100];
 	std::ofstream outputFile;
 	sprintf(buff, "output/ouput-%dx%d-i%d-b%d.csv", width, height, ITERATIONS, BOUNCES);
-	outputFile.open(buff);
+	outputFile.open(buff, std::ios::trunc);
 
 	for (int i = 0; i < height; i++) {
                 for (int j = 0; j < width * 3; j++) {
