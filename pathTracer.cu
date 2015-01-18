@@ -8,8 +8,8 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 400
-#define BOUNCES 4 //At least 3!!
+#define ITERATIONS 20
+#define BOUNCES 4 //At least 3!! (this means 1 in reality)
 #define WIDTH 256
 #define HEIGHT 256
 #define FIELD_SIZE WIDTH*HEIGHT
@@ -284,7 +284,7 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 
 	if (rayCount > 0) {
 		int numBlocks, numThreads;
-		if (rayCount < 1024) {
+		if (rayCount * BOUNCES < 1024) {
 			numBlocks = 1;
 			numThreads = rayCount * BOUNCES;
 		} else {
