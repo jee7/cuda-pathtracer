@@ -15,12 +15,12 @@
 				
 				var rows = newInput.split("\n");
 				var height = rows.length;
-				var width = rows[0].split(" ").length;
+				var width = rows[0].split(" ").length / 3;
 				console.log(rows[0].split(" "));
 				
 				console.log(rows);
-				console.log(width);
-				console.log(height);
+				console.log("w: " + width);
+				console.log("h: " + height);
 				
 				if (width > 0 && height > 0) {
 				
@@ -34,11 +34,11 @@
 					var x, y, cols, index, r, g, b;
 					for (y in rows) {
 						cols = rows[y].split(" ");
-						for (x in cols) {
+						for (x = 0; x < cols.length / 3; x++) {
 							index = parseInt(y * width * 4 + 4 * x);
-							r = 255 * parseFloat(cols[x]);
-							g = r;
-							b = r;
+							r = 255 * parseFloat(cols[3 * x + 0]);
+							g = 255 * parseFloat(cols[3 * x + 1]);
+							b = 255 * parseFloat(cols[3 * x + 2]);
 							imgData.data[index + 0] = r;
 							imgData.data[index + 1] = g;
 							imgData.data[index + 2] = b;
