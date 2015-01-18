@@ -534,7 +534,7 @@ int main(void)
 
 	char buff[100];
 	std::ofstream outputFile;
-	sprintf(buff, "ouput-%dx%d-i%d-b%d.csv", width, height, ITERATIONS, BOUNCES);
+	sprintf(buff, "output/ouput-%dx%d-i%d-b%d.csv", width, height, ITERATIONS, BOUNCES);
 	outputFile.open(buff);
 
 	for (int i = 0; i < height; i++) {
