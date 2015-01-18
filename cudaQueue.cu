@@ -19,6 +19,7 @@ class Queue {
 		__host__ __device__ void init(int size);
 		__device__ bool push(Task t);
 		__device__ Task pop();
+		__device__ int length();
 	private:
 		__device__ void swap();
 
@@ -79,4 +80,9 @@ __device__ Task Queue::pop() {
 	}
 
 	return resultTask;
+}
+
+__device__ int Queue::length() {
+
+	return j - i;
 }

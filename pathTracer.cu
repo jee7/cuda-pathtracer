@@ -286,9 +286,9 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 		int numBlocks, numThreads;
 		if (rayCount < 1024) {
 			numBlocks = 1;
-			numThreads = rayCount;
+			numThreads = rayCount * BOUNCES;
 		} else {
-			numBlocks = int(rayCount / 32) + 1;
+			numBlocks = int(rayCount * BOUNCES / 32) + 1;
 			numThreads = 32;
 			
 		}
