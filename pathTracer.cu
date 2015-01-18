@@ -8,8 +8,8 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 300
-#define BOUNCES 3 //At least 3!!
+#define ITERATIONS 100
+#define BOUNCES 4 //At least 3!!
 #define WIDTH 256
 #define HEIGHT 256
 #define FIELD_SIZE WIDTH*HEIGHT
@@ -288,10 +288,11 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 			numBlocks = 1;
 			numThreads = rayCount;
 		} else {
-			numBlocks = int(rayCount / 512) + 1;
-			numThreads = 512;
+			numBlocks = int(rayCount / 32) + 1;
+			numThreads = 32;
 			
 		}
+
 		//printf("Ray count: %ld\n", rayCount);
 		//printf("blocks %d, threads %d\n", numBlocks, numThreads);
 	        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state);
@@ -299,7 +300,7 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 
 	cudaError_t error = cudaGetLastError();
         if (error != cudaSuccess) {
-                printf("CUDA error: %s\n", cudaGetErrorString(error));
+                printf("CUDA error (kernel): %s\n", cudaGetErrorString(error));
         }
 
 	//printf("Triangle: [%f, %f, %f], [%f, %f, %f], [%f, %f, %f]\n", triangles[0], triangles[1], triangles[2], triangles[3], triangles[4], triangles[5], triangles[6], triangles[7], triangles[8]);
