@@ -15,8 +15,7 @@
 				
 				var rows = newInput.split("\n");
 				var height = rows.length;
-				var width = rows[0].split(" ").length / 3;
-				console.log(rows[0].split(" "));
+				var width = rows[0].trim().split(" ").length / 3;
 				
 				console.log(rows);
 				console.log("w: " + width);
@@ -33,7 +32,7 @@
 					
 					var x, y, cols, index, r, g, b;
 					for (y in rows) {
-						cols = rows[y].split(" ");
+						cols = rows[y].trim().split(" ");
 						for (x = 0; x < cols.length / 3; x++) {
 							index = parseInt(y * width * 4 + 4 * x);
 							r = 255 * parseFloat(cols[3 * x + 0]);
