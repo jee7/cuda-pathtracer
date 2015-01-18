@@ -1,7 +1,7 @@
 struct Task {
 	float data[6];
+	float value[3];
 	bool isValid;
-	float value;
 	int index;
 	short depth; 
 };

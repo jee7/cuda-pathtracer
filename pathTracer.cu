@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <iostream>
+#include <fstream>
 #include <math.h>
 
 #include "cudaQueue.cu"
@@ -117,7 +118,6 @@ __device__ float checkItersection(float* rayStart, float* rayDirection, float* t
 
 __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, int* faces) {
 	//TODO Use normals to cull some intersections?
-	//printf("BB");
 
 	float intersection;
         float closestIntersection = INFINITY;
@@ -150,7 +150,7 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
 }
 
 
-__global__ void rayTrace(float* field, float* vertices, int* faces, float* normals, Queue* q, curandState* state) {
+__global__ void rayTrace(float* field, float* vertices, int* faces, float* normals, float* colors, Queue* q, curandState* state) {
 	//printf("pop-");
 	Task task = q->pop();
 	//printf("popped\n");
@@ -175,7 +175,10 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 	}
 	if (depth >= BOUNCES - 1) { //Max depth, add our value
 		//printf("Finish %f\n", task.value);
-		atomicAdd(&(field[index]), task.value / ITERATIONS);
+		atomicAdd(&(field[index + 0]), task.value[0] / ITERATIONS);
+		atomicAdd(&(field[index + 1]), task.value[1] / ITERATIONS);
+		atomicAdd(&(field[index + 2]), task.value[2] / ITERATIONS);
+
 		return;
         }
 
@@ -183,10 +186,14 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
         if (rayHit.isHit) {
 		bool isLightSource = rayHit.index >= 10 * 3;
                 if (isLightSource && depth == 0) {
-			atomicExch(&(field[index]), 1.0); //We hit the light source straight away
+			atomicExch(&(field[index + 0]), colors[rayHit.index + 0]); //We hit the light source straight away
+			atomicExch(&(field[index + 1]), colors[rayHit.index + 1]);
+			atomicExch(&(field[index + 2]), colors[rayHit.index + 2]);
                 } else {
 			if (isLightSource) {
-				atomicAdd(&(field[index]), task.value / ITERATIONS); //We hit the light, write the accumulated value
+				atomicAdd(&(field[index + 0]), task.value[0] / ITERATIONS); //We hit the light, write the accumulated value
+				atomicAdd(&(field[index + 1]), task.value[1] / ITERATIONS);
+				atomicAdd(&(field[index + 2]), task.value[2] / ITERATIONS);
                         } else {
 
 				//Generate random ray
@@ -200,14 +207,16 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 				rayStart[1] += rayHit.t * rayDir[1];
 				rayStart[2] += rayHit.t * rayDir[2];
 			
-				task.data[0] = rayStart[0];
-				task.data[1] = rayStart[1];
-				task.data[2] = rayStart[2];
-				task.data[3] = randomRayDir[0];
-				task.data[4] = randomRayDir[1];
-				task.data[5] = randomRayDir[2];
-				task.depth  += 1;
-				task.value  *= brdf;
+				task.data[0]   = rayStart[0];
+				task.data[1]   = rayStart[1];
+				task.data[2]   = rayStart[2];
+				task.data[3]   = randomRayDir[0];
+				task.data[4]   = randomRayDir[1];
+				task.data[5]   = randomRayDir[2];
+				task.depth    += 1;
+				task.value[0] *= brdf * colors[rayHit.index + 0];
+				task.value[1] *= brdf * colors[rayHit.index + 1];
+				task.value[2] *= brdf * colors[rayHit.index + 2];
 
 		                q->push(task);
 			}
@@ -218,7 +227,7 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 }
 
 
-__global__ void tracer(float* field, float* vertices, int* faces, float* normals, Queue* q, curandState* state) {
+__global__ void tracer(float* field, float* vertices, int* faces, float* normals, float* colors, Queue* q, curandState* state) {
 
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	int xIndex = index % HEIGHT - WIDTH / 2;
@@ -241,15 +250,17 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 	for (int i = 0; i < ITERATIONS; i++) {
 
 		Task task = Task();
-		task.data[0] = rayStart[0];
-		task.data[1] = rayStart[1];
-		task.data[2] = rayStart[2];
-		task.data[3] = rayDirection[0];
-		task.data[4] = rayDirection[1];
-		task.data[5] = rayDirection[2];
-		task.index   = index;
-		task.depth   = 0;
-		task.value   = 1.0;
+		task.data[0]  = rayStart[0];
+		task.data[1]  = rayStart[1];
+		task.data[2]  = rayStart[2];
+		task.data[3]  = rayDirection[0];
+		task.data[4]  = rayDirection[1];
+		task.data[5]  = rayDirection[2];
+		task.index    = index * 3;
+		task.depth    = 0;
+		task.value[0] = 1.0;
+		task.value[1] = 1.0;
+		task.value[2] = 1.0;
 		task.isValid = true;
 
 		q->push(task);
@@ -265,7 +276,7 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 	}
 	int numBlocks = ITERATIONS;
 	int numThreads = BOUNCES;
-        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, q, state);
+        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state);
 	cudaDeviceSynchronize();
 
                         
@@ -372,6 +383,23 @@ int main(void)
 
 		printf("Normal: [%f, %f, %f]\n", normals[i + 0], normals[i + 1], normals[i + 2]);
 	}
+	float colors[facesCount * 3] = { //Each face has a color
+		1.0, 0.0, 0.0, //Left wall
+		1.0, 0.0, 0.0,
+		1.0, 1.0, 1.0,
+		1.0, 1.0, 1.0,
+		0.0, 1.0, 0.0, //Right wall
+		0.0, 1.0, 0.0,
+		1.0, 1.0, 1.0, //Bottom
+		1.0, 1.0, 1.0,
+		1.0, 1.0, 1.0, //Top
+		1.0, 1.0, 1.0,
+		1.0, 1.0, 1.0, //Front
+		1.0, 1.0, 1.0,
+		1.0, 1.0, 1.0,
+		1.0, 1.0, 1.0, //Light 
+		1.0, 1.0, 1.0 
+	};
 
 	/*float near = 0.0;
 	float far = 100.0;
@@ -397,15 +425,11 @@ int main(void)
 
 	//Sick... http://stackoverflow.com/questions/16024087/copy-an-object-to-device
 	Task* d_data = 0;
-	//Task* d_out = 0;
 	cudaMalloc((void **)&d_data, q_size * sizeof(Task));
-	//cudaMalloc((void **)&d_out, q_size * sizeof(Task));
 
 	cudaMemcpy(d_data, host_q->data, q_size * sizeof(Task), cudaMemcpyHostToDevice);
-	//cudaMemcpy(d_out, host_q->out, q_size * sizeof(Task), cudaMemcpyHostToDevice);
 
 	cudaMemcpy(&(q->data), &d_data, sizeof(Task *), cudaMemcpyHostToDevice);
-	//cudaMemcpy(&(q->out), &d_out, sizeof(Task *), cudaMemcpyHostToDevice);
 
 	error = cudaGetLastError();
 	if (error != cudaSuccess) {
@@ -413,9 +437,7 @@ int main(void)
 	}
 
 
-	int num_bytes = size* sizeof(float);
-	//int num_threads = 16;
-	//int num_blocks = size / 16; //size / 128;
+	int num_bytes = size * 3 * sizeof(float);
 	int num_threads, num_blocks;
 	if (size >= 128) {
 		num_threads = 128;
@@ -428,8 +450,6 @@ int main(void)
 		num_blocks = 1;
 	}
 	printf("Blocks: %d, ThreadPerBlock: %d\n", num_blocks, num_threads);
-	//int num_threads = size;
-	//int num_blocks = 1;
 
 	/*
 		Threads in different blocks cannot
@@ -439,7 +459,7 @@ int main(void)
 
 	float *host_field = 0;
 	host_field = (float*)malloc(num_bytes);
-	for (int i = 0; i < size; i++) {
+	for (int i = 0; i < size * 3; i++) {
 		host_field[i] = 0.0; //We start with 0.0 
 	}
 
@@ -448,21 +468,26 @@ int main(void)
 	float *device_vertices = 0;
 	int *device_faces = 0;
 	float *device_normals = 0;
+	float *device_colors = 0;
+
 
 	cudaMalloc((void**)&device_field, num_bytes);
 
-	float faces_num_bytes = facesCount * sizeof(int);
+	float faces_num_bytes    = facesCount    * sizeof(int);
 	float vertices_num_bytes = verticesCount * sizeof(float);
-	float normals_num_bytes = facesCount * sizeof(float);
+	float normals_num_bytes  = facesCount    * sizeof(float);
+	float colors_num_bytes   = facesCount    * sizeof(float);
 	cudaMalloc((void**)&device_vertices, vertices_num_bytes);
-	cudaMalloc((void**)&device_faces, faces_num_bytes);
-	cudaMalloc((void**)&device_normals, normals_num_bytes);
+	cudaMalloc((void**)&device_faces,    faces_num_bytes);
+	cudaMalloc((void**)&device_normals,  normals_num_bytes);
+	cudaMalloc((void**)&device_colors,   colors_num_bytes);
 
 	printf("Int: %i\n", sizeof(int));
 
 	cudaMemcpy(device_faces, faces, faces_num_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(device_vertices, vertices, vertices_num_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(device_normals, normals, normals_num_bytes, cudaMemcpyHostToDevice);
+	cudaMemcpy(device_colors, colors, colors_num_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(device_field, host_field, num_bytes, cudaMemcpyHostToDevice);
 
 
@@ -473,21 +498,31 @@ int main(void)
 
 	//hello<<<1,1>>>();
 	//tracer<<<1,5>>>(device_array, device_vertices, device_faces, device_normals, q);
-	tracer<<<num_blocks, num_threads>>>(device_field, device_vertices, device_faces, device_normals, q, randomState);
+	tracer<<<num_blocks, num_threads>>>(device_field, device_vertices, device_faces, device_normals, device_colors, q, randomState);
 	cudaDeviceSynchronize();
 
 	// download and inspect the result on the host:
 	cudaMemcpy(host_field, device_field, num_bytes, cudaMemcpyDeviceToHost);
 
+	char buff[100];
+	std::ofstream outputFile;
+	sprintf(buff, "ouput-%dx%d-i%d-b%d.csv", width, height, ITERATIONS, BOUNCES);
+	outputFile.open(buff);
 
-	for (int i = 0; i < width; i++) {
-                for (int j = 0; j < height; j++) {
+	for (int i = 0; i < height; i++) {
+                for (int j = 0; j < width * 3; j++) {
 			//std::cout << result[i][j] << ", ";
 			//std::cout << host_array[i * width + j] << " ";
-			printf("%.2f ", host_field[i * width + j]);
+			if (size <= 1024) {
+				printf("%.2f ", host_field[i * width * 3 + j]);
+			}
+			outputFile << host_field[i * width * 3 + j] << " ";
                 }
+		outputFile << std::endl;
 		std::cout << std::endl;
         }
+
+	outputFile.close();
 
 	error = cudaGetLastError();
         if (error != cudaSuccess) {
