@@ -8,10 +8,10 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 20
+#define ITERATIONS 800
 #define BOUNCES 4 //At least 3!!
-#define WIDTH 128
-#define HEIGHT 128
+#define WIDTH 256
+#define HEIGHT 256
 #define FIELD_SIZE WIDTH*HEIGHT
 
 struct hit {
@@ -428,11 +428,11 @@ int main(void)
 	//Size should be at least width*height?
 	unsigned long long int memoryCap = 3500000000; //3.5GB
 	//memoryCap = 1000000;
-	printf("q_size = %llu vs %llu\n",(unsigned long long int)(memoryCap / sizeof(Task)), size * BOUNCES * ITERATIONS );
+	printf("q_size = %llu vs %llu\n",(unsigned long long int)(memoryCap / sizeof(Task)), size * ITERATIONS );
 	printf("sizeof(Task) = %d\n", sizeof(Task));
 	int q_size = min((unsigned long long int)(memoryCap / sizeof(Task)), size * BOUNCES * ITERATIONS);
 
-	unsigned long neededSize = size * BOUNCES * ITERATIONS;
+	unsigned long neededSize = size * ITERATIONS;
 	if (q_size < neededSize) {
 		printf("Queue size %d is smaller than needed size %lu!\n", q_size, neededSize);
 
