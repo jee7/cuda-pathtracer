@@ -8,9 +8,9 @@
 #include <curand_kernel.h>
 
 #define ITERATIONS 20
-#define BOUNCES 3 //At least 3!!
-#define WIDTH 512
-#define HEIGHT 512
+#define BOUNCES 4 //At least 3!!
+#define WIDTH 128
+#define HEIGHT 128
 
 struct hit {
 	bool isHit;
