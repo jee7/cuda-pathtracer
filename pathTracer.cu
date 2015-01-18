@@ -7,10 +7,10 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 800
-#define BOUNCES 4 //At least 3!!
-#define WIDTH 64
-#define HEIGHT 64
+#define ITERATIONS 20
+#define BOUNCES 3 //At least 3!!
+#define WIDTH 512
+#define HEIGHT 512
 
 struct hit {
 	bool isHit;
@@ -218,7 +218,10 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 				task.value[1] *= brdf * colors[rayHit.index + 1];
 				task.value[2] *= brdf * colors[rayHit.index + 2];
 
-		                q->push(task);
+		                bool isSuccess = q->push(task);
+				if (!isSuccess) {
+					printf("Could not add bounce to queue! Very bad!\n");
+				}
 			}
                 }
         } else {
@@ -232,6 +235,7 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	int xIndex = index % HEIGHT - WIDTH / 2;
 	int yIndex = HEIGHT / 2 - (int)(index / WIDTH);
+	long int rayCount = ITERATIONS * BOUNCES;
 
 	//float lightDirection[3] = {0.707107, 0.0, 0.707107};
 
@@ -263,21 +267,33 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 		task.value[2] = 1.0;
 		task.isValid = true;
 
-		q->push(task);
-		//for (int bounce = 0; bounce < BOUNCES; bounce++) {
-			//Send #aliveRay kernels
-			//if (field[index] != 0.0) { //Alive ray
-			//	rayTrace<<<1,4>>>(field, vertices, faces, normals, q, state);
-			//}
-			//cudaDeviceSynchronize();
-			//__syncthreads();
-		//}
-		//__syncthreads();
+		bool canPush = q->push(task);
+		if (!canPush) {
+			printf("Could not add initial rays! Very bad!"); return;
+			//Can not resolve the rays here, because different blocks can not be synchronized
+			/*if (randomFloat(0, 1, state) < 0.01) {
+				printf("Presending rays\n");
+				int numThreads = 128;
+				int numBlocks = (int)(ITERATIONS / 128) + 1;
+				rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state);
+				rayCount -= numBlocks * numThreads;
+			}
+			i--;*/
+		}
 	}
-	int numBlocks = ITERATIONS;
-	int numThreads = BOUNCES;
-        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state);
-	cudaDeviceSynchronize();
+
+	if (rayCount > 0) {
+		int numBlocks, numThreads;
+		if (rayCount < 128) {
+			numBlocks = 1;
+			numThreads = rayCount;
+		} else {
+			numBlocks = rayCount / 128;
+			numThreads = 128;
+		}
+	        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state);
+	}
+	//cudaDeviceSynchronize();
 
                         
 
@@ -329,7 +345,7 @@ int main(void)
 {
 	int width = WIDTH;
 	int height = HEIGHT;
-	int size = width * height;
+	unsigned long long size = width * height;
 
 	const int trianglesCount = 14;
 	const int verticesCount = 12 * 3; //This is not triangles count * 3, some triangles share
@@ -408,15 +424,27 @@ int main(void)
 	float top = height / 2.0;
 	float bottom = height / -2.0;
 	*/
-	int q_size = size * BOUNCES * ITERATIONS;
-	q_size = size * BOUNCES * ITERATIONS;
+
+	//Size should be at least width*height?
+	unsigned long long int memoryCap = 1000000000; //1GB
+	//memoryCap = 1000000;
+	printf("q_size = %llu vs %llu\n",(unsigned long long int)(memoryCap / sizeof(Task)), size * BOUNCES * ITERATIONS );
+	printf("sizeof(Task) = %d\n", sizeof(Task));
+	int q_size = min((unsigned long long int)(memoryCap / sizeof(Task)), size * BOUNCES * ITERATIONS);
+
+	unsigned long neededSize = size * BOUNCES * ITERATIONS;
+	if (q_size < neededSize) {
+		printf("Queue size %d is smaller than needed size %lu!\n", q_size, neededSize);
+
+		return 1;
+	}
 
 	Queue* q = 0;
 	Queue* host_q = new Queue();
 	host_q->init(q_size);
 	cudaMalloc((void **)&q, sizeof(Queue));
 	printf("Queue size: %d\n", sizeof(Queue));
-	printf("Queue lists: %d\n", q_size * sizeof(Task));
+	printf("Queue lists: %llu\n", q_size * sizeof(Task));
 	cudaError_t error = cudaMemcpy(q, host_q, sizeof(Queue), cudaMemcpyHostToDevice);
 
 	if(error != cudaSuccess) {
@@ -511,15 +539,15 @@ int main(void)
 
 	for (int i = 0; i < height; i++) {
                 for (int j = 0; j < width * 3; j++) {
-			//std::cout << result[i][j] << ", ";
-			//std::cout << host_array[i * width + j] << " ";
 			if (size <= 1024) {
 				printf("%.2f ", host_field[i * width * 3 + j]);
 			}
 			outputFile << host_field[i * width * 3 + j] << " ";
                 }
+		if (size <= 1024) {
+			std::cout << std::endl;
+		}
 		outputFile << std::endl;
-		std::cout << std::endl;
         }
 
 	outputFile.close();

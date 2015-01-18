@@ -17,7 +17,7 @@ class Queue {
 		int size;
 
 		__host__ __device__ void init(int size);
-		__device__ void push(Task t);
+		__device__ bool push(Task t);
 		__device__ Task pop();
 	private:
 		__device__ void swap();
@@ -33,21 +33,29 @@ __host__ __device__ void Queue::init(int size) {
 	this->data = new Task[size];
 	this->size = size;
 	
-	printf("Init queue, i=%d", i);
+	printf("Init queue, i=%d, size=%llu\n", i, size);
 }
 
-__device__ void Queue::push(Task t) {
+__device__ bool Queue::push(Task t) {
 
 	int currentJ = atomicAdd(&j, 1);
 
 	if (currentJ - i >= size) {
-		printf("Queue is full!!\n");
+		//printf("Queue is full at %d (i = %d)!!\n", currentJ, i);
+		atomicSub(&j, 1);
+
+		return false;
 	} else {
 		int index = (currentJ) % size;
+		if (index > size) {
+			printf("%llu > %llu\n", index, size);
+		}
 		data[index] = t;
-		//printf("Push (%d)\n", index);
+		//printf("Push (%d) - i = %d, j = %d\n", index, i, j);
 		//printf("Added to q (%d), i=%d\n", t.index, currentI);
 		//printf("%d, ", currentI);
+
+		return true;
 	}
 }
 
@@ -57,12 +65,13 @@ __device__ Task Queue::pop() {
 
 	int currentI = atomicAdd(&i, 1);
 	if (currentI >= j) {
+		atomicSub(&i, 1);
 		//printf("Queue is empty (i=%d j=%d)", i, j);
 		resultTask = Task();
 		resultTask.isValid = false;
 	} else {
 		int index = currentI % size;
-		//printf("Pop (%d)\n", index);
+		//printf("Pop (%d) - i = %d, j = %d\n", index, i, j);
 
 		Task a = Task(); a.isValid = false;
 		resultTask = data[index];
