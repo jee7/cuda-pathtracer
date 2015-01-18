@@ -9,7 +9,7 @@
 #include <curand_kernel.h>
 
 #define ITERATIONS 400
-#define BOUNCES 3 //At least 3!! (this means at least 1 in reality)
+#define BOUNCES 5 //At least 3!! (this means at least 1 in reality)
 #define WIDTH 256
 #define HEIGHT 256
 #define FIELD_SIZE WIDTH*HEIGHT
