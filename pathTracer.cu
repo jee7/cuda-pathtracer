@@ -8,10 +8,10 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 800
-#define BOUNCES 4 //At least 3!!
-#define WIDTH 128
-#define HEIGHT 128
+#define ITERATIONS 300
+#define BOUNCES 3 //At least 3!!
+#define WIDTH 256
+#define HEIGHT 256
 #define FIELD_SIZE WIDTH*HEIGHT
 
 struct hit {
@@ -425,7 +425,7 @@ int main(void)
 	std::clock_t timeStart = std::clock();
 
 	//Size should be at least width*height?
-	unsigned long long int memoryCap = 3000000000; //3GB
+	unsigned long long int memoryCap = 3500000000; //3.5GB
 	//memoryCap = 1000000;
 	printf("q_size = %llu vs %llu\n",(unsigned long long int)(memoryCap / sizeof(Task)), size * BOUNCES * ITERATIONS );
 	printf("sizeof(Task) = %d\n", sizeof(Task));
