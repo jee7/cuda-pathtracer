@@ -8,10 +8,10 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 100
-#define BOUNCES 3 //At least 3!!
-#define WIDTH 256
-#define HEIGHT 256
+#define ITERATIONS 20
+#define BOUNCES 4 //At least 3!!
+#define WIDTH 128
+#define HEIGHT 128
 #define FIELD_SIZE WIDTH*HEIGHT
 
 struct hit {
