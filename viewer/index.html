@@ -1,0 +1,69 @@
+<html>
+	<head>
+		<title>Cuda Pathtracer Result Viewer</title>
+		<script type="text/javascript">
+			var canvas, context;
+			
+			function loaded() {
+				canvas = document.getElementById("viewerCanvas");
+				context = canvas.getContext("2d");
+			}
+		
+			function inputChanged() {
+				var newInput = document.getElementById("viewerInput").value.trim();
+				
+				
+				var rows = newInput.split("\n");
+				var height = rows.length;
+				var width = rows[0].split(" ").length / 3;
+				console.log(rows[0].split(" "));
+				
+				console.log(rows);
+				console.log("w: " + width);
+				console.log("h: " + height);
+				
+				if (width > 0 && height > 0) {
+				
+					canvas.width = width;
+					canvas.height = height;
+					
+					//var imgData = context.getImageData(0, 0, width, height);
+					var imgData = context.createImageData(width, height); 
+					console.log(imgData);
+					
+					var x, y, cols, index, r, g, b;
+					for (y in rows) {
+						cols = rows[y].split(" ");
+						for (x = 0; x < cols.length / 3; x++) {
+							index = parseInt(y * width * 4 + 4 * x);
+							r = 255 * parseFloat(cols[3 * x + 0]);
+							g = 255 * parseFloat(cols[3 * x + 1]);
+							b = 255 * parseFloat(cols[3 * x + 2]);
+							imgData.data[index + 0] = r;
+							imgData.data[index + 1] = g;
+							imgData.data[index + 2] = b;
+							imgData.data[index + 3] = 255;
+						}
+					}
+					
+					context.putImageData(imgData, 0, 0);
+				}
+			}
+		
+		</script>
+		<style type="text/css">
+			canvas {
+				border: 1px solid black;
+			}
+			textarea {
+				width: 400px;
+				height: 200px;
+			}
+		</style>
+	</head>
+	<body onload="loaded()">
+		<textarea id="viewerInput" onchange="inputChanged()"></textarea>
+		</br>
+		<canvas width="200" height="200" id="viewerCanvas"></canvas>
+	</body>
+</html>
