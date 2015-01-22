@@ -8,8 +8,8 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 400
-#define BOUNCES 5 //At least 3!! (this means at least 1 in reality)
+#define ITERATIONS 800
+#define BOUNCES 4 //At least 3!! (this means at least 1 in reality)
 #define WIDTH 256
 #define HEIGHT 256
 #define FIELD_SIZE WIDTH*HEIGHT
@@ -18,6 +18,16 @@ struct hit {
 	bool isHit;
 	int index;
 	float t;
+};
+
+struct Parameters {
+	int startX;
+	int startY;
+	int width;
+	int height;
+	int iterations;
+	int bounces;
+	unsigned long long size;
 };
 
 __device__ Queue q;
@@ -152,7 +162,7 @@ __device__ hit castRay(float* rayStart, float* rayDirection, float* vertices, in
 }
 
 
-__global__ void rayTrace(float* field, float* vertices, int* faces, float* normals, float* colors, Queue* q, curandState* state) {
+__global__ void rayTrace(float* field, float* vertices, int* faces, float* normals, float* colors, Queue* q, curandState* state, Parameters* params) {
 	//printf("pop-");
 	Task task = q->pop();
 	//printf("popped\n");
@@ -177,9 +187,9 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 	}
 	if (depth >= BOUNCES - 1) { //Max depth, add our value
 		//printf("Finish %f\n", task.value);
-		atomicAdd(&(field[index + 0]), task.value[0] / ITERATIONS);
-		atomicAdd(&(field[index + 1]), task.value[1] / ITERATIONS);
-		atomicAdd(&(field[index + 2]), task.value[2] / ITERATIONS);
+		atomicAdd(&(field[index + 0]), task.value[0] / params->iterations);
+		atomicAdd(&(field[index + 1]), task.value[1] / params->iterations);
+		atomicAdd(&(field[index + 2]), task.value[2] / params->iterations);
 
 		return;
         }
@@ -193,9 +203,9 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 			atomicExch(&(field[index + 2]), colors[rayHit.index + 2]);
                 } else {
 			if (isLightSource) {
-				atomicAdd(&(field[index + 0]), task.value[0] / ITERATIONS); //We hit the light, write the accumulated value
-				atomicAdd(&(field[index + 1]), task.value[1] / ITERATIONS);
-				atomicAdd(&(field[index + 2]), task.value[2] / ITERATIONS);
+				atomicAdd(&(field[index + 0]), task.value[0] / params->iterations); //We hit the light, write the accumulated value
+				atomicAdd(&(field[index + 1]), task.value[1] / params->iterations);
+				atomicAdd(&(field[index + 2]), task.value[2] / params->iterations);
                         } else {
 
 				//Generate random ray
@@ -232,21 +242,21 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 }
 
 
-__global__ void tracer(float* field, float* vertices, int* faces, float* normals, float* colors, Queue* q, curandState* state) {
+__global__ void tracer(float* field, float* vertices, int* faces, float* normals, float* colors, Queue* q, curandState* state, Parameters* params) {
 
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
-	int xIndex = index % HEIGHT - WIDTH / 2;
-	int yIndex = HEIGHT / 2 - (int)(index / WIDTH);
-	long int rayCount = ITERATIONS * BOUNCES;
+	int xIndex = index % params->height - params->width / 2;
+	int yIndex = params->height / 2 - (int)(index / params->width);
+	long int rayCount = params->iterations * params->bounces;
 
-	if (index >= FIELD_SIZE) { //Some threads are outside the field
+	if (index >= params->size) { //Some threads are outside the field
 		//printf("Dead %d\n", index);
 		rayCount = 0;
 	} else {
 
 		curand_init(1337 + index, 0, 0, &state[index]);
 
-		float zoom = WIDTH / 21.0;
+		float zoom = params->width / 21.0;
 
 		float pixelCoordinates[3] = {xIndex / zoom, yIndex / zoom, 1.0}; //Clipping box
 		float rayStart[3] = {0.0, 0.0, 20.0}; //Camera position
@@ -295,7 +305,7 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 
 		//printf("Ray count: %ld\n", rayCount);
 		//printf("blocks %d, threads %d\n", numBlocks, numThreads);
-	        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state);
+	        rayTrace<<<numBlocks,numThreads>>>(field, vertices, faces, normals, colors, q, state, params);
 	}
 
 	cudaError_t error = cudaGetLastError();
@@ -349,9 +359,7 @@ vector normalize(vector v) {
 
 int main(void)
 {
-	int width = WIDTH;
-	int height = HEIGHT;
-	unsigned long long size = width * height;
+	unsigned long long size = WIDTH * HEIGHT;
 
 	const int trianglesCount = 14;
 	const int verticesCount = 12 * 3; //This is not triangles count * 3, some triangles share
@@ -423,115 +431,180 @@ int main(void)
 		1.0, 1.0, 1.0 
 	};
 
+	//Result field
+	int num_bytes = size * 3 * sizeof(float);
+	float *result_field = 0;
+        result_field = (float*)malloc(num_bytes);
+        for (int i = 0; i < size * 3; i++) {
+        	result_field[i] = 0.0; //We start with 0.0
+        }
+
+
 	std::clock_t timeStart = std::clock();
 
-	//Size should be at least width*height?
-	unsigned long long int memoryCap = 3500000000; //3.5GB
-	//memoryCap = 1000000;
-	printf("q_size = %llu vs %llu\n",(unsigned long long int)(memoryCap / sizeof(Task)), size * ITERATIONS );
-	printf("sizeof(Task) = %d\n", sizeof(Task));
-	int q_size = min((unsigned long long int)(memoryCap / sizeof(Task)), size * BOUNCES * ITERATIONS);
+	//float** host_fields = 0;
+	//float** device_fields = 0;
+	cudaError_t error;
 
-	unsigned long neededSize = size * ITERATIONS;
-	if (q_size < neededSize) {
-		printf("Queue size %d is smaller than needed size %lu!\n", q_size, neededSize);
+	int gpuCount = 0;
+	cudaGetDeviceCount(&gpuCount);
+	//gpuCount = 1;
 
-		return 1;
+	//host_fields = (float**)malloc(gpuCount * sizeof(float*));
+	//device_fields = (float**)malloc(gpuCount * sizeof(float*));
+	float* host_fields[gpuCount];
+	float* device_fields[gpuCount];
+
+	unsigned long long gpuFieldSize;
+
+	for (int gpuIndex = 0; gpuIndex < gpuCount; gpuIndex++) {
+
+		Parameters params = Parameters();
+	        params.width = WIDTH / gpuCount;
+	        params.height = HEIGHT;
+		params.startX = gpuIndex * params.width;
+		params.startY = 0;
+	        params.iterations = ITERATIONS;
+	        params.bounces = BOUNCES;
+		params.size = params.width * params.height;
+		gpuFieldSize = params.size;
+
+		printf("Field size: %ull\n", gpuFieldSize);
+
+		//Host field for 1 GPU
+		int num_bytes = params.size * 3 * sizeof(float);
+
+	        host_fields[gpuIndex] = (float*)malloc(num_bytes);
+	        for (int i = 0; i < params.size * 3; i++) {
+        	        host_fields[gpuIndex][i] = 0.0; //We start with 0.0
+	        }
+
+		cudaSetDevice(gpuIndex);
+		printf("GPU %d\n", gpuIndex);
+
+		unsigned long long int memoryCap = 3500000000; //3.5GB
+		printf("q_size = %llu vs %llu\n",(unsigned long long int)(memoryCap / sizeof(Task)), params.size * params.iterations);
+		printf("sizeof(Task) = %d\n", sizeof(Task));
+		int q_size = min((unsigned long long int)(memoryCap / sizeof(Task)), params.size * params.bounces * params.iterations);
+
+		unsigned long neededSize = params.size * params.iterations;
+		if (q_size < neededSize) {
+			printf("Queue size %d is smaller than needed size %lu!\n", q_size, neededSize);
+
+			return 1;
+		}
+
+		Parameters* device_params = 0;
+		cudaMalloc((void **)&device_params, sizeof(Parameters));
+		cudaMemcpy(device_params, &params, sizeof(Parameters), cudaMemcpyHostToDevice);
+		
+
+		Queue* q = 0;
+		Queue* host_q = new Queue();
+		host_q->init(q_size);
+		cudaMalloc((void **)&q, sizeof(Queue));
+		printf("Queue size: %d\n", sizeof(Queue));
+		printf("Queue lists: %llu\n", q_size * sizeof(Task));
+	        cudaMemcpy(q, host_q, sizeof(Queue), cudaMemcpyHostToDevice);
+
+
+		//Sick... http://stackoverflow.com/questions/16024087/copy-an-object-to-device
+		Task* d_data = 0;
+		cudaMalloc((void **)&d_data, q_size * sizeof(Task));
+		cudaMemcpy(d_data, host_q->data, q_size * sizeof(Task), cudaMemcpyHostToDevice);
+		cudaMemcpy(&(q->data), &d_data, sizeof(Task *), cudaMemcpyHostToDevice);
+
+		int num_threads, num_blocks, total_threads;
+		if (params.size >= 1024) {
+			num_threads = 1024;
+			num_blocks = (params.size / 1024) + 1;
+		} else if (params.size >= 16) {
+			num_threads = 16;
+			num_blocks = (params.size / 16) + 1;
+		} else {
+			num_threads = params.size;
+			num_blocks = 1;
+		}
+		total_threads = num_blocks * num_threads;
+		printf("Blocks: %d, ThreadPerBlock: %d\n", num_blocks, num_threads);
+
+		/*
+			Threads in different blocks cannot
+			synchronize -> CUDA runtime system
+			can execute blocks in any order
+		*/
+
+
+		// cudaMalloc a device array
+		float *device_vertices = 0;
+		int *device_faces = 0;
+		float *device_normals = 0;
+		float *device_colors = 0;
+
+		printf("CUDA MALLOC\n");
+		device_fields[gpuIndex] = 0;
+		error = cudaMalloc((void**)&(device_fields[gpuIndex]), num_bytes);
+		if (error != cudaSuccess) {
+                	printf("CUDA error: %s\n", cudaGetErrorString(error));
+	        }
+		printf("Memory allocated to device pointer: %d\n", device_fields[gpuIndex]);
+
+		
+
+		float faces_num_bytes    = facesCount    * sizeof(int);
+		float vertices_num_bytes = verticesCount * sizeof(float);
+		float normals_num_bytes  = facesCount    * sizeof(float);
+		float colors_num_bytes   = facesCount    * sizeof(float);
+		cudaMalloc((void**)&device_vertices, vertices_num_bytes);
+		cudaMalloc((void**)&device_faces,    faces_num_bytes);
+		cudaMalloc((void**)&device_normals,  normals_num_bytes);
+		cudaMalloc((void**)&device_colors,   colors_num_bytes);
+
+		cudaMemcpy(device_faces, faces, faces_num_bytes, cudaMemcpyHostToDevice);
+		cudaMemcpy(device_vertices, vertices, vertices_num_bytes, cudaMemcpyHostToDevice);
+		cudaMemcpy(device_normals, normals, normals_num_bytes, cudaMemcpyHostToDevice);
+		cudaMemcpy(device_colors, colors, colors_num_bytes, cudaMemcpyHostToDevice);
+
+		printf("CUDA MEMCPY\n");
+		error = cudaMemcpy(device_fields[gpuIndex], host_fields[gpuIndex], num_bytes, cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {
+                        printf("CUDA error: %s\n", cudaGetErrorString(error));
+                }
+
+		curandState *randomState;
+		cudaMalloc((void**)&randomState, total_threads * sizeof(curandState));
+
+		//hello<<<1,1>>>();
+		tracer<<<num_blocks, num_threads>>>(device_fields[gpuIndex], device_vertices, device_faces, device_normals, device_colors, q, randomState, device_params);
+	
 	}
-
-	Queue* q = 0;
-	Queue* host_q = new Queue();
-	host_q->init(q_size);
-	cudaMalloc((void **)&q, sizeof(Queue));
-	printf("Queue size: %d\n", sizeof(Queue));
-	printf("Queue lists: %llu\n", q_size * sizeof(Task));
-	cudaError_t error = cudaMemcpy(q, host_q, sizeof(Queue), cudaMemcpyHostToDevice);
-
-	if(error != cudaSuccess) {
-	    printf("CUDA error: %s\n", cudaGetErrorString(error));
-	}
-
-	//Sick... http://stackoverflow.com/questions/16024087/copy-an-object-to-device
-	Task* d_data = 0;
-	cudaMalloc((void **)&d_data, q_size * sizeof(Task));
-
-	cudaMemcpy(d_data, host_q->data, q_size * sizeof(Task), cudaMemcpyHostToDevice);
-
-	cudaMemcpy(&(q->data), &d_data, sizeof(Task *), cudaMemcpyHostToDevice);
 
 	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		printf("CUDA error: %s\n", cudaGetErrorString(error));
+        if (error != cudaSuccess) {
+                printf("CUDA error: %s\n", cudaGetErrorString(error));
+        }
+
+	printf("Kernels have started...\n");
+	printf("Waiting for results...\n");
+	int num_gpu_bytes = gpuFieldSize * sizeof(float) * 3;
+	for (int gpuIndex = 0; gpuIndex < gpuCount; gpuIndex++) {
+		cudaSetDevice(gpuIndex);
+		
+		 // Block and copy result
+                error = cudaMemcpy(host_fields[gpuIndex], device_fields[gpuIndex], num_gpu_bytes, cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {
+                        printf("CUDA error: %s\n", cudaGetErrorString(error));
+                }
+		printf("Copied memory from: %d\n", device_fields[gpuIndex]);
+
+
+                //Copy to the result to one result field
+                for (int i = 0; i < gpuFieldSize; i++) {
+                        //printf("copy to %d\n", i + gpuFieldSize * gpuIndex);
+                        result_field[i + gpuFieldSize * gpuIndex] = host_fields[gpuIndex][i];
+                }
+
 	}
-
-
-	int num_bytes = size * 3 * sizeof(float);
-	int num_threads, num_blocks, total_threads;
-	if (size >= 1024) {
-		num_threads = 1024;
-		num_blocks = (size / 1024) + 1;
-	} else if (size >= 16) {
-		num_threads = 16;
-		num_blocks = (size / 16) + 1;
-	} else {
-		num_threads = size;
-		num_blocks = 1;
-	}
-	total_threads = num_blocks * num_threads;
-	printf("Blocks: %d, ThreadPerBlock: %d\n", num_blocks, num_threads);
-
-	/*
-		Threads in different blocks cannot
-		synchronize -> CUDA runtime system
-		can execute blocks in any order
-	*/
-
-	float *host_field = 0;
-	host_field = (float*)malloc(num_bytes);
-	for (int i = 0; i < size * 3; i++) {
-		host_field[i] = 0.0; //We start with 0.0 
-	}
-
-	// cudaMalloc a device array
-	float *device_field = 0;
-	float *device_vertices = 0;
-	int *device_faces = 0;
-	float *device_normals = 0;
-	float *device_colors = 0;
-
-
-	cudaMalloc((void**)&device_field, num_bytes);
-
-	float faces_num_bytes    = facesCount    * sizeof(int);
-	float vertices_num_bytes = verticesCount * sizeof(float);
-	float normals_num_bytes  = facesCount    * sizeof(float);
-	float colors_num_bytes   = facesCount    * sizeof(float);
-	cudaMalloc((void**)&device_vertices, vertices_num_bytes);
-	cudaMalloc((void**)&device_faces,    faces_num_bytes);
-	cudaMalloc((void**)&device_normals,  normals_num_bytes);
-	cudaMalloc((void**)&device_colors,   colors_num_bytes);
-
-	printf("Int: %i\n", sizeof(int));
-
-	cudaMemcpy(device_faces, faces, faces_num_bytes, cudaMemcpyHostToDevice);
-	cudaMemcpy(device_vertices, vertices, vertices_num_bytes, cudaMemcpyHostToDevice);
-	cudaMemcpy(device_normals, normals, normals_num_bytes, cudaMemcpyHostToDevice);
-	cudaMemcpy(device_colors, colors, colors_num_bytes, cudaMemcpyHostToDevice);
-	cudaMemcpy(device_field, host_field, num_bytes, cudaMemcpyHostToDevice);
-
-
-	curandState *randomState;
-	cudaMalloc((void**)&randomState, total_threads * sizeof(curandState));
-
-	//hello<<<1,1>>>();
-	tracer<<<num_blocks, num_threads>>>(device_field, device_vertices, device_faces, device_normals, device_colors, q, randomState);
-	
-	//This is not needed, cudaMemcpy() will block
-	//cudaDeviceSynchronize();
-
-	// download and inspect the result on the host:
-	cudaMemcpy(host_field, device_field, num_bytes, cudaMemcpyDeviceToHost);
-
 
 	std::clock_t timeStop = clock();
 	const double timeDifference = double(timeStop - timeStart) / CLOCKS_PER_SEC;
@@ -541,16 +614,16 @@ int main(void)
 
 	char buff[100];
 	std::ofstream outputFile;
-	sprintf(buff, "output/ouput-%dx%d-i%d-b%d.csv", width, height, ITERATIONS, BOUNCES);
+	sprintf(buff, "output/2/ouput-%dx%d-i%d-b%d.csv", WIDTH, HEIGHT, ITERATIONS, BOUNCES);
 	outputFile.open(buff, std::ios::trunc);
 
-	for (int i = 0; i < height; i++) {
-                for (int j = 0; j < width * 3; j++) {
+	for (int i = 0; i < HEIGHT; i++) {
+                for (int j = 0; j < WIDTH * 3; j++) {
 			if (size <= 1024) {
-				printf("%.2f ", host_field[i * width * 3 + j]);
+				printf("%.2f ", result_field[i * WIDTH * 3 + j]);
 			}
-			outputFile << host_field[i * width * 3 + j] << " ";
-                }
+			outputFile << result_field[i * WIDTH * 3 + j] << " ";
+       	        }
 		if (size <= 1024) {
 			std::cout << std::endl;
 		}
