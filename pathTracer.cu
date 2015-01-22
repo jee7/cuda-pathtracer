@@ -245,8 +245,8 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 __global__ void tracer(float* field, float* vertices, int* faces, float* normals, float* colors, Queue* q, curandState* state, Parameters* params) {
 
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
-	int xIndex = index % params->height - params->width / 2;
-	int yIndex = params->height / 2 - (int)(index / params->width);
+	int xIndex = index % params->height - params->width / 2 + params->startX;
+	int yIndex = params->height / 2 - (int)(index / params->width) + params->startY;
 	long int rayCount = params->iterations * params->bounces;
 
 	if (index >= params->size) { //Some threads are outside the field
@@ -599,7 +599,7 @@ int main(void)
 
 
                 //Copy to the result to one result field
-                for (int i = 0; i < gpuFieldSize; i++) {
+                for (int i = 0; i < 3 * gpuFieldSize; i++) {
                         //printf("copy to %d\n", i + gpuFieldSize * gpuIndex);
                         result_field[i + 3 * gpuFieldSize * gpuIndex] = host_fields[gpuIndex][i];
                 }
