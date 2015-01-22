@@ -466,8 +466,8 @@ int main(void)
 	for (int gpuIndex = 0; gpuIndex < gpuCount; gpuIndex++) {
 
 		Parameters params = Parameters();
-	        params.width = WIDTH / gpuCount;
-	        params.height = HEIGHT;
+	        params.width = WIDTH;
+	        params.height = HEIGHT / gpuCount;
 		params.startX = 3 * gpuIndex * params.width;
 		params.startY = 0;
 		params.totalWidth = WIDTH;
