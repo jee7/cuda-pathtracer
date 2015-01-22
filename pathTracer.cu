@@ -296,9 +296,9 @@ __global__ void tracer(float* field, float* vertices, int* faces, float* normals
 		int numBlocks, numThreads;
 		if (rayCount * BOUNCES < 1024) {
 			numBlocks = 1;
-			numThreads = rayCount * BOUNCES;
+			numThreads = rayCount * params->bounces;
 		} else {
-			numBlocks = int(rayCount * BOUNCES / 32) + 1;
+			numBlocks = int(rayCount * params->bounces / 32) + 1;
 			numThreads = 32;
 			
 		}
@@ -601,7 +601,7 @@ int main(void)
                 //Copy to the result to one result field
                 for (int i = 0; i < gpuFieldSize; i++) {
                         //printf("copy to %d\n", i + gpuFieldSize * gpuIndex);
-                        result_field[i + gpuFieldSize * gpuIndex] = host_fields[gpuIndex][i];
+                        result_field[i + 3 * gpuFieldSize * gpuIndex] = host_fields[gpuIndex][i];
                 }
 
 	}
