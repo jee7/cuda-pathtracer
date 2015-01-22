@@ -8,10 +8,10 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define ITERATIONS 800
+#define ITERATIONS 100
 #define BOUNCES 4 //At least 3!! (this means at least 1 in reality)
-#define WIDTH 256
-#define HEIGHT 256
+#define WIDTH 32
+#define HEIGHT 32
 #define FIELD_SIZE WIDTH*HEIGHT
 
 struct hit {
@@ -23,8 +23,11 @@ struct hit {
 struct Parameters {
 	int startX;
 	int startY;
+	int startIndex;
 	int width;
 	int height;
+	int totalWidth;
+	int totalHeight;
 	int iterations;
 	int bounces;
 	unsigned long long size;
@@ -245,9 +248,12 @@ __global__ void rayTrace(float* field, float* vertices, int* faces, float* norma
 __global__ void tracer(float* field, float* vertices, int* faces, float* normals, float* colors, Queue* q, curandState* state, Parameters* params) {
 
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
-	int xIndex = index % params->height - params->width / 2 + params->startX;
-	int yIndex = params->height / 2 - (int)(index / params->width) + params->startY;
+	int worldIndex = blockIdx.x * blockDim.x + threadIdx.x + params->startIndex;
+	int xIndex = worldIndex % params->totalHeight - params->totalWidth / 2;
+	int yIndex = params->totalHeight / 2 - (int)(worldIndex / params->totalWidth);
 	long int rayCount = params->iterations * params->bounces;
+
+	//printf("Ray [%d,%d]\n", xIndex, yIndex);
 
 	if (index >= params->size) { //Some threads are outside the field
 		//printf("Dead %d\n", index);
@@ -462,11 +468,14 @@ int main(void)
 		Parameters params = Parameters();
 	        params.width = WIDTH / gpuCount;
 	        params.height = HEIGHT;
-		params.startX = gpuIndex * params.width;
+		params.startX = 3 * gpuIndex * params.width;
 		params.startY = 0;
+		params.totalWidth = WIDTH;
+		params.totalHeight = HEIGHT;
 	        params.iterations = ITERATIONS;
 	        params.bounces = BOUNCES;
 		params.size = params.width * params.height;
+		params.startIndex = gpuIndex * params.size;
 		gpuFieldSize = params.size;
 
 		printf("Field size: %ull\n", gpuFieldSize);
